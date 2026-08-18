@@ -23,12 +23,13 @@ import 'components/overlay_bubble_widget.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
 ///
-/// Features:
-/// 1. SmartDownloadCatcher: Background clipboard monitor for .apk, .zip, .mp4, etc.
-/// 2. CloudExtractorService: Multi-platform video stream resolver (YouTube, TikTok, Instagram).
-/// 3. SmartUrlFilter: Anti-Ad & Scam filter (blocks ads, tracking, doubleclick, fake buttons).
-/// 4. Android 2026 Scoped Storage path resolution via [StoragePathResolver].
-/// 5. Video-to-MP3 extraction engine via [AudioExtractorService] & FFmpeg.
+/// Final Integration:
+/// 1. Automatic [SmartDownloadCatcher] background clipboard listener on boot.
+/// 2. Instant [OverlayBubbleWidget] triggering [_initiateTurboDownload] with zero manual typing.
+/// 3. Multi-source media resolution via [CloudExtractorService] (YouTube/TikTok/Instagram).
+/// 4. Ad-Shield and scam link filtering via [SmartUrlFilter].
+/// 5. Compliant Android 2026 Scoped Storage management via [StoragePathResolver].
+/// 6. High-fidelity Video-to-MP3 audio conversion via [AudioExtractorService].
 class PulseDownloadScreen extends StatefulWidget {
   final TurboDownloadService? customTurboService;
   final LinkAnalyzer? customLinkAnalyzer;
@@ -45,7 +46,7 @@ class PulseDownloadScreen extends StatefulWidget {
 
 class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     with TickerProviderStateMixin {
-  // Color Palette
+  // Brand Color Palette
   static const Color deepCarbon = Color(0xFF0A0A0C);
   static const Color fieryAmber = Color(0xFFFF4F00);
 
@@ -56,16 +57,17 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   late final StealthParticleController _particleController;
   late final Ticker _particleTicker;
 
-  // Engine services
+  // Low-Level Engines & Services
   late final TurboDownloadService _turboService;
   late final LinkAnalyzer _linkAnalyzer;
   late final CloudExtractorService _cloudExtractor;
   late final SmartDownloadCatcher _smartCatcher;
 
+  // Stream Subscriptions
   StreamSubscription<TurboProgressEvent>? _progressSub;
   StreamSubscription<DetectedDownloadLink>? _catcherSub;
 
-  // Detected link for Floating Overlay Bubble
+  // Active floating overlay link
   DetectedDownloadLink? _floatingLink;
 
   // State Telemetry
@@ -76,7 +78,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   int _totalBytes = 0;
   int _activeThreads = 16;
   double _bufferedRamMb = 0.0;
-  String _statusMessage = 'جاهز لبدء التحميل // أدخل الرابط';
+  String _statusMessage = 'جاهز لبدء التحميل // أدخل الرابط أو انسخه';
   String? _targetFilePath;
   String _resolvedStorageDir = '';
   bool _extractMp3 = false;
@@ -89,7 +91,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       text: 'https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso',
     );
 
-    // Initialize Animations
+    // 1. Initialize Cockpit Animations
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1400),
@@ -100,7 +102,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       duration: const Duration(milliseconds: 1800),
     )..repeat();
 
-    // Particle simulation
+    // 2. Initialize Kinetic Particle Physics
     _particleController = StealthParticleController();
     _particleTicker = createTicker((elapsed) {
       _particleController.tick(0.016);
@@ -113,24 +115,26 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       }
     })..start();
 
+    // 3. Instantiate Engines
     _turboService = widget.customTurboService ?? TurboDownloadService();
     _linkAnalyzer = widget.customLinkAnalyzer ?? LinkAnalyzer();
     _cloudExtractor = CloudExtractorService();
     _smartCatcher = SmartDownloadCatcher();
 
-    // Start smart clipboard listener
+    // 4. AUTOMATIC SMART CLIPBOARD CATCHER ACTIVATION ON BOOT
     _smartCatcher.startListening();
-    _catcherSub = _smartCatcher.onDownloadLinkDetected.listen((detected) {
+    _catcherSub = _smartCatcher.onDownloadLinkDetected.listen((detectedLink) {
       if (!mounted) return;
       setState(() {
-        _floatingLink = detected;
+        _floatingLink = detectedLink;
       });
+      HapticFeedback.mediumImpact();
     });
 
-    // Auto-resolve Scoped Storage Directory on boot
+    // 5. Auto-resolve Scoped Storage Directory
     _initStoragePath();
 
-    // Listen to real-time engine telemetry
+    // 6. Listen to real-time engine telemetry
     _progressSub = _turboService.onProgress.listen((event) {
       if (!mounted) return;
       setState(() {
@@ -235,9 +239,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     }
 
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(rawInput);
-    if (cleanUrl != rawInput) {
-      _urlInputController.text = cleanUrl;
-    }
+    _urlInputController.text = cleanUrl;
 
     setState(() {
       _isDownloading = true;
@@ -522,7 +524,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
             ),
           ),
 
-          // 4. Smart Overlay Bubble (When Clipboard Link is Caught)
+          // 4. Smart Overlay Bubble (Final Automatic Linkage)
           if (_floatingLink != null)
             Positioned(
               top: 0,
@@ -530,9 +532,10 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
               right: 0,
               child: OverlayBubbleWidget(
                 link: _floatingLink!,
-                onDownloadPressed: (link) {
-                  _urlInputController.text = link.cleanUrl;
-                  _initiateTurboDownload(overrideUrl: link.cleanUrl);
+                onDownloadPressed: (detectedLink) {
+                  // Direct automated pipeline: load into controller & start turbo download
+                  _urlInputController.text = detectedLink.cleanUrl;
+                  _initiateTurboDownload(overrideUrl: detectedLink.cleanUrl);
                   setState(() => _floatingLink = null);
                 },
                 onDismiss: () {

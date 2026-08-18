@@ -1,24 +1,39 @@
 name: hyperpulse
-description: Ultra-high-speed low-level parallel download engine for Flutter & Android.
-version: 1.0.0
-homepage: https://github.com/af737100-creator/apxr
+description: "A next-generation hyper-speed multi-threaded parallel download engine and stealth cockpit UI for Flutter."
+version: 2.4.0+1
+publish_to: 'none'
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
-  flutter: ">=3.10.0"
+  sdk: '>=3.2.0 <4.0.0'
+  flutter: ">=3.16.0"
 
 dependencies:
   flutter:
     sdk: flutter
+
+  # High-Performance Network Engine & Parallel Range Requests
   dio: ^5.4.3+1
+
+  # Native Media & Audio Converter Engine (Video to MP3 extraction)
+  ffmpeg_kit_flutter_new: ^3.1.0
+
+  # Advanced Motion, Glitch & Fluid Micro-Interactions
+  flutter_animate: ^4.5.0
+
+  # Modern Scoped Storage & Android Directory Management
   path_provider: ^2.1.2
   path: ^1.9.0
-  async: ^2.11.0
+
+  # Cryptographic Integrity & Segment Hashing
   crypto: ^3.0.3
-  flutter_animate: ^4.5.0
-  ffmpeg_kit_flutter_new: ^3.0.0
+
+  # Flutter Material & Cupertino Core Icons
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
