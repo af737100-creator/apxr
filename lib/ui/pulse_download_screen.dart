@@ -11,19 +11,24 @@ import '../engine/turbo_download_service.dart';
 import '../engine/link_analyzer.dart';
 import '../engine/storage_path_resolver.dart';
 import '../engine/audio_extractor_service.dart';
+import '../engine/smart_url_filter.dart';
+import '../engine/cloud_extractor_service.dart';
+import '../engine/smart_download_catcher.dart';
 import '../utils/error_handler.dart';
 import 'painters/fiery_pulse_ring_painter.dart';
 import 'painters/cockpit_grid_painter.dart';
 import 'components/glass_cockpit_input.dart';
 import 'components/stealth_particle_system.dart';
+import 'components/overlay_bubble_widget.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
 ///
-/// Refactored & Enhanced with:
-/// 1. Android 2026 Scoped Storage path resolution via [StoragePathResolver].
-/// 2. Functional system Clipboard paste with fallback notifications.
-/// 3. Video-to-MP3 extraction engine via [AudioExtractorService] & FFmpeg.
-/// 4. Comprehensive try-catch and friendly Arabic error handling via [HyperPulseErrorHandler].
+/// Features:
+/// 1. SmartDownloadCatcher: Background clipboard monitor for .apk, .zip, .mp4, etc.
+/// 2. CloudExtractorService: Multi-platform video stream resolver (YouTube, TikTok, Instagram).
+/// 3. SmartUrlFilter: Anti-Ad & Scam filter (blocks ads, tracking, doubleclick, fake buttons).
+/// 4. Android 2026 Scoped Storage path resolution via [StoragePathResolver].
+/// 5. Video-to-MP3 extraction engine via [AudioExtractorService] & FFmpeg.
 class PulseDownloadScreen extends StatefulWidget {
   final TurboDownloadService? customTurboService;
   final LinkAnalyzer? customLinkAnalyzer;
@@ -54,7 +59,14 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   // Engine services
   late final TurboDownloadService _turboService;
   late final LinkAnalyzer _linkAnalyzer;
+  late final CloudExtractorService _cloudExtractor;
+  late final SmartDownloadCatcher _smartCatcher;
+
   StreamSubscription<TurboProgressEvent>? _progressSub;
+  StreamSubscription<DetectedDownloadLink>? _catcherSub;
+
+  // Detected link for Floating Overlay Bubble
+  DetectedDownloadLink? _floatingLink;
 
   // State Telemetry
   bool _isDownloading = false;
@@ -103,6 +115,17 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
     _turboService = widget.customTurboService ?? TurboDownloadService();
     _linkAnalyzer = widget.customLinkAnalyzer ?? LinkAnalyzer();
+    _cloudExtractor = CloudExtractorService();
+    _smartCatcher = SmartDownloadCatcher();
+
+    // Start smart clipboard listener
+    _smartCatcher.startListening();
+    _catcherSub = _smartCatcher.onDownloadLinkDetected.listen((detected) {
+      if (!mounted) return;
+      setState(() {
+        _floatingLink = detected;
+      });
+    });
 
     // Auto-resolve Scoped Storage Directory on boot
     _initStoragePath();
@@ -125,7 +148,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     });
   }
 
-  /// Automatically resolves the correct download destination path for Android 2026
   Future<void> _initStoragePath() async {
     try {
       final path = await StoragePathResolver.resolveDownloadDirectory();
@@ -139,7 +161,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     }
   }
 
-  /// Handles download completion and optional MP3 extraction
   Future<void> _handleDownloadComplete() async {
     setState(() {
       _isDownloading = false;
@@ -152,7 +173,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       count: 90,
     );
 
-    // If MP3 extraction was requested on a video file, trigger FFmpeg
     if (_extractMp3 && _targetFilePath != null && File(_targetFilePath!).existsSync()) {
       setState(() {
         _statusMessage = 'جاري استخراج ملف الصوت MP3 عبر FFmpeg...';
@@ -192,10 +212,10 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     }
   }
 
-  /// Primary launch handler for parallel turbo download with comprehensive error handling
-  Future<void> _initiateTurboDownload() async {
-    final rawUrl = _urlInputController.text.trim();
-    if (rawUrl.isEmpty) {
+  /// Primary launch handler for parallel turbo download with cloud extraction and smart filtering
+  Future<void> _initiateTurboDownload({String? overrideUrl}) async {
+    final rawInput = (overrideUrl ?? _urlInputController.text).trim();
+    if (rawInput.isEmpty) {
       _showCustomToast(
         title: 'تنبيه',
         message: 'يرجى إدخال أو لصق رابط التحميل أولاً',
@@ -204,31 +224,63 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       return;
     }
 
+    // 1. Anti-Ad & Scam Shield Filter
+    if (!SmartUrlFilter.isCleanAndSafe(rawInput)) {
+      _showCustomToast(
+        title: 'تم حظر الرابط',
+        message: 'هذا الرابط تم تصنيفه كرابط إعلاني أو تتبع وهمي وتم حظره تلقائياً لحماية جهازك.',
+        isSuccess: false,
+      );
+      return;
+    }
+
+    final cleanUrl = SmartUrlFilter.extractRealTargetUrl(rawInput);
+    if (cleanUrl != rawInput) {
+      _urlInputController.text = cleanUrl;
+    }
+
     setState(() {
       _isDownloading = true;
       _progress = 0.01;
-      _statusMessage = 'جاري فحص الرابط واختبار دعم التجزئة (Probing Range)...';
+      _statusMessage = 'جاري فحص الرابط واختبار الأنوية...';
     });
 
     try {
-      // 1. Storage resolution check
       if (_resolvedStorageDir.isEmpty) {
         _resolvedStorageDir = await StoragePathResolver.resolveDownloadDirectory();
       }
 
-      // 2. Analyze and resolve URL
-      final MediaStreamInfo mediaInfo = await _linkAnalyzer.analyzeAndResolve(rawUrl);
-      final isVideo = AudioExtractorService.isVideoFormat(mediaInfo.title) ||
-          mediaInfo.format.toLowerCase().contains('mp4') ||
-          mediaInfo.format.toLowerCase().contains('webm');
+      String directStreamUrl = cleanUrl;
+      String inferredTitle = cleanUrl.split('/').last.split('?').first;
+      String inferredFormat = SmartUrlFilter.inferFileExtension(cleanUrl) ?? 'bin';
+
+      // 2. If it's a social/video platform (YouTube, TikTok, etc.), query CloudExtractorService
+      if (CloudExtractorService.isSocialVideoPlatform(cleanUrl)) {
+        setState(() {
+          _statusMessage = 'استخراج رابط الفيديو المباشر من السيرفر السحابي...';
+        });
+
+        final cloudResult = await _cloudExtractor.extractDirectMedia(cleanUrl);
+        if (cloudResult.success) {
+          directStreamUrl = cloudResult.directStreamUrl;
+          inferredTitle = cloudResult.title;
+          inferredFormat = cloudResult.format;
+        } else {
+          throw Exception(cloudResult.errorMessage ?? 'فشل استخراج الفيديو السحابي');
+        }
+      }
+
+      final isVideo = AudioExtractorService.isVideoFormat(inferredTitle) ||
+          inferredFormat.toLowerCase().contains('mp4') ||
+          inferredFormat.toLowerCase().contains('webm');
 
       setState(() {
         _isVideo = isVideo;
-        _targetFilePath = '$_resolvedStorageDir/${mediaInfo.title}';
-        _statusMessage = 'تهيئة الأنوية المتوازية (${mediaInfo.format.toUpperCase()})';
+        _targetFilePath = '$_resolvedStorageDir/$inferredTitle';
+        _statusMessage = 'تهيئة الأنوية المتوازية (${inferredFormat.toUpperCase()})';
       });
 
-      // 3. Hardware profile for device
+      // 3. Hardware profile
       final deviceProfile = DeviceMetrics(
         totalRamMb: 8192,
         availableRamMb: 4096,
@@ -239,8 +291,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
       final task = DownloadTask(
         id: 'pulse_${DateTime.now().millisecondsSinceEpoch}',
-        sourceUrl: mediaInfo.directDownloadUrl,
-        fileName: mediaInfo.title,
+        sourceUrl: directStreamUrl,
+        fileName: inferredTitle,
         destinationDirectory: _resolvedStorageDir,
       );
 
@@ -262,73 +314,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         message: friendlyError,
         isSuccess: false,
       );
-    }
-  }
-
-  /// Displays storage locations bottom sheet for user selection
-  Future<void> _showStorageLocationPicker() async {
-    try {
-      final locations = await StoragePathResolver.getAvailableStorageLocations();
-      if (!mounted) return;
-
-      showModalBottomSheet(
-        context: context,
-        backgroundColor: const Color(0xFF141318),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          side: BorderSide(color: Color(0xFFFF4F00), width: 0.8),
-        ),
-        builder: (ctx) => Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: const [
-                  Icon(Icons.folder_special, color: Color(0xFFFF4F00), size: 20),
-                  SizedBox(width: 10),
-                  Text(
-                    'اختر موقع حفظ الملفات (Scoped Storage)',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ...locations.map((loc) => ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      loc.isPublic ? Icons.public : Icons.security,
-                      color: loc.path == _resolvedStorageDir ? const Color(0xFFFF4F00) : Colors.grey,
-                    ),
-                    title: Text(
-                      loc.displayName,
-                      style: TextStyle(
-                        color: loc.path == _resolvedStorageDir ? Colors.white : Colors.grey[300],
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    subtitle: Text(
-                      loc.path,
-                      style: const TextStyle(color: Colors.grey, fontSize: 10, fontFamily: 'monospace'),
-                    ),
-                    trailing: loc.path == _resolvedStorageDir
-                        ? const Icon(Icons.check, color: Color(0xFFFF4F00))
-                        : null,
-                    onTap: () {
-                      setState(() => _resolvedStorageDir = loc.path);
-                      Navigator.pop(ctx);
-                    },
-                  )),
-              const SizedBox(height: 10),
-            ],
-          ),
-        ),
-      );
-    } catch (e) {
-      debugPrint('[PulseDownloadScreen] Storage picker error: $e');
     }
   }
 
@@ -397,6 +382,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
   @override
   void dispose() {
+    _catcherSub?.cancel();
+    _smartCatcher.stopListening();
     _progressSub?.cancel();
     _particleTicker.dispose();
     _pulseController.dispose();
@@ -519,7 +506,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                   // BOTTOM: Enhanced Glass Cockpit Input
                   GlassCockpitInput(
                     controller: _urlInputController,
-                    onStartDownload: _initiateTurboDownload,
+                    onStartDownload: () => _initiateTurboDownload(),
                     isDownloading: _isDownloading,
                     extractMp3Enabled: _extractMp3,
                     onExtractMp3Changed: (val) => setState(() => _extractMp3 = val),
@@ -527,7 +514,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     currentStoragePath: _resolvedStorageDir.isNotEmpty
                         ? _resolvedStorageDir.split('/').takeLast(2).join('/')
                         : 'Downloads/HyperPulse',
-                    onStorageTap: _showStorageLocationPicker,
                   ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.1, end: 0),
 
                   const SizedBox(height: 8),
@@ -535,6 +521,25 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
               ),
             ),
           ),
+
+          // 4. Smart Overlay Bubble (When Clipboard Link is Caught)
+          if (_floatingLink != null)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: OverlayBubbleWidget(
+                link: _floatingLink!,
+                onDownloadPressed: (link) {
+                  _urlInputController.text = link.cleanUrl;
+                  _initiateTurboDownload(overrideUrl: link.cleanUrl);
+                  setState(() => _floatingLink = null);
+                },
+                onDismiss: () {
+                  setState(() => _floatingLink = null);
+                },
+              ),
+            ),
         ],
       ),
     );
@@ -612,9 +617,9 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
               ),
               const SizedBox(width: 6),
               Text(
-                _isDownloading ? 'PARALLEL ACTIVE' : 'IDLE READY',
+                _isDownloading ? 'PARALLEL ACTIVE' : 'CATCHER ACTIVE',
                 style: TextStyle(
-                  color: _isDownloading ? fieryAmber : const Color(0xFF9E9698),
+                  color: _isDownloading ? fieryAmber : const Color(0xFF4ADE80),
                   fontSize: 9,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.8,
@@ -652,8 +657,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           ),
           Container(width: 1, height: 24, color: const Color(0xFF282426)),
           _buildTelemetryItem(
-            label: 'STORAGE',
-            value: 'SCOPED AUTO',
+            label: 'SHIELD FILTER',
+            value: 'ANTI-AD ON',
             accent: const Color(0xFF4ADE80),
           ),
         ],

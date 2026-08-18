@@ -13,6 +13,9 @@ export 'engine/turbo_download_service.dart';
 export 'engine/link_analyzer.dart';
 export 'engine/storage_path_resolver.dart';
 export 'engine/audio_extractor_service.dart';
+export 'engine/smart_url_filter.dart';
+export 'engine/cloud_extractor_service.dart';
+export 'engine/smart_download_catcher.dart';
 export 'isolates/chunk_worker_isolate.dart';
 export 'utils/error_handler.dart';
 
@@ -22,3 +25,4 @@ export 'ui/painters/fiery_pulse_ring_painter.dart';
 export 'ui/painters/cockpit_grid_painter.dart';
 export 'ui/components/glass_cockpit_input.dart';
 export 'ui/components/stealth_particle_system.dart';
+export 'ui/components/overlay_bubble_widget.dart';
