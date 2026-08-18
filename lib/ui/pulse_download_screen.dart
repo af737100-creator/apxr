@@ -514,7 +514,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     onExtractMp3Changed: (val) => setState(() => _extractMp3 = val),
                     isVideoDetected: _isVideo,
                     currentStoragePath: _resolvedStorageDir.isNotEmpty
-                        ? _resolvedStorageDir.split('/').takeLast(2).join('/')
+                        ? (() {
+                            final parts = _resolvedStorageDir.split('/');
+                            return parts.length > 2
+                                ? parts.sublist(parts.length - 2).join('/')
+                                : _resolvedStorageDir;
+                          })()
                         : 'Downloads/HyperPulse',
                   ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.1, end: 0),
 
