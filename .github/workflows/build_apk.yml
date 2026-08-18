@@ -22,7 +22,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Set up Flutter Environment
         uses: subosito/flutter-action@v2
@@ -31,14 +30,20 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install Dependencies
+      - name: Initialize Android Scaffolding (if needed)
+        run: |
+          if [ ! -f "android/build.gradle" ]; then
+            flutter create --platforms=android .
+          fi
+
+      - name: Install Flutter Dependencies
         run: flutter pub get
 
       - name: Build Universal Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Build Split ABI APKs
-        run: flutter build apk --release --split-per-abi
+      - name: Build Split ABI APKs (Optimized size)
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons
 
       - name: Upload Universal APK Artifact
         uses: actions/upload-artifact@v4
