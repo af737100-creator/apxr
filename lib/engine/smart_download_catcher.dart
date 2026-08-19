@@ -25,6 +25,8 @@ class DetectedDownloadLink {
       if (rawUrl.contains('youtube') || rawUrl.contains('youtu.be')) return 'فيديو YouTube';
       if (rawUrl.contains('tiktok')) return 'فيديو TikTok';
       if (rawUrl.contains('instagram')) return 'مقطع Instagram';
+      if (rawUrl.contains('twitter') || rawUrl.contains('x.com')) return 'مقطع X (تويتر)';
+      if (rawUrl.contains('facebook') || rawUrl.contains('fb.watch')) return 'فيديو Facebook';
       return 'فيديو وسائط';
     }
     final segment = cleanUrl.split('/').last.split('?').first;
@@ -32,16 +34,23 @@ class DetectedDownloadLink {
   }
 }
 
-/// [SmartDownloadCatcher] monitors the device Clipboard in real time,
-/// cleans URLs through [SmartUrlFilter], and alerts the user via overlay prompts.
+/// [SmartDownloadCatcher] monitors the system Clipboard both in Flutter and via the
+/// native Android Foreground Service to ensure Xiaomi / Samsung / Huawei devices
+/// never kill the background monitoring radar.
 class SmartDownloadCatcher {
   static final SmartDownloadCatcher _instance = SmartDownloadCatcher._internal();
   factory SmartDownloadCatcher() => _instance;
-  SmartDownloadCatcher._internal();
+  SmartDownloadCatcher._internal() {
+    _initNativeMethodChannel();
+  }
+
+  static const MethodChannel _nativeChannel =
+      MethodChannel('com.hyperpulse.app/foreground_service');
 
   Timer? _clipboardTimer;
   String? _lastCapturedUrl;
   bool _isListening = false;
+  bool _isForegroundServiceActive = false;
 
   final StreamController<DetectedDownloadLink> _linkStreamController =
       StreamController<DetectedDownloadLink>.broadcast();
@@ -50,23 +59,55 @@ class SmartDownloadCatcher {
       _linkStreamController.stream;
 
   bool get isListening => _isListening;
+  bool get isForegroundServiceActive => _isForegroundServiceActive;
 
-  /// Starts the intelligent clipboard observer (polls every 1200ms)
-  void startListening({Duration pollInterval = const Duration(milliseconds: 1200)}) {
+  void _initNativeMethodChannel() {
+    _nativeChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onUrlCaughtFromBackground') {
+        final String? url = call.arguments as String?;
+        if (url != null && url.isNotEmpty) {
+          _processPotentialUrl(url);
+        }
+      }
+    });
+  }
+
+  /// Starts the intelligent clipboard observer and kicks off the native Android Foreground Service.
+  void startListening({Duration pollInterval = const Duration(milliseconds: 1000)}) {
     if (_isListening) return;
     _isListening = true;
-    debugPrint('[SmartDownloadCatcher] Started clipboard monitor.');
+    debugPrint('[SmartDownloadCatcher] 🚀 Started clipboard monitor & Foreground Service.');
 
+    // 1. Start Android Native Foreground Service (Sticky Notification in Status Bar)
+    _startNativeForegroundService();
+
+    // 2. Poll Clipboard actively when in foreground
     _clipboardTimer = Timer.periodic(pollInterval, (_) async {
       await inspectClipboard();
     });
   }
 
-  /// Stops the clipboard observer
+  Future<void> _startNativeForegroundService() async {
+    try {
+      await _nativeChannel.invokeMethod('startService');
+      _isForegroundServiceActive = true;
+      debugPrint('[SmartDownloadCatcher] ✅ Native Foreground Service started.');
+    } catch (e) {
+      debugPrint('[SmartDownloadCatcher] Native service start notice: $e');
+    }
+  }
+
+  /// Stops the clipboard observer and native service
   void stopListening() {
     _clipboardTimer?.cancel();
     _clipboardTimer = null;
     _isListening = false;
+
+    try {
+      _nativeChannel.invokeMethod('stopService');
+      _isForegroundServiceActive = false;
+    } catch (_) {}
+
     debugPrint('[SmartDownloadCatcher] Stopped clipboard monitor.');
   }
 
@@ -80,39 +121,44 @@ class SmartDownloadCatcher {
         return null;
       }
 
-      // Check if text is a valid HTTP/HTTPS URL
-      if (!text.startsWith('http://') && !text.startsWith('https://')) {
-        return null;
-      }
-
-      // 1. Apply Anti-Ad & Scam Shield Filter
-      if (!SmartUrlFilter.isCleanAndSafe(text)) {
-        debugPrint('[SmartDownloadCatcher] Rejected ad/tracker link: $text');
-        return null;
-      }
-
-      final cleanUrl = SmartUrlFilter.extractRealTargetUrl(text);
-      final isDownloadable = SmartUrlFilter.isDownloadableFileUrl(cleanUrl);
-      final isVideo = CloudExtractorService.isSocialVideoPlatform(cleanUrl);
-
-      // Only capture if it matches downloadable file extensions (apk, zip, mp4, pdf, etc.)
-      // OR recognized video platforms (YouTube, TikTok, etc.)
-      if (isDownloadable || isVideo) {
-        _lastCapturedUrl = text;
-        final detected = DetectedDownloadLink(
-          rawUrl: text,
-          cleanUrl: cleanUrl,
-          inferredExtension: SmartUrlFilter.inferFileExtension(cleanUrl),
-          isVideoPlatform: isVideo,
-          detectedAt: DateTime.now(),
-        );
-
-        debugPrint('[SmartDownloadCatcher] 🎯 Download link caught: ${detected.displayName}');
-        _linkStreamController.add(detected);
-        return detected;
-      }
+      return _processPotentialUrl(text);
     } catch (e) {
       debugPrint('[SmartDownloadCatcher] Clipboard inspection error: $e');
+    }
+    return null;
+  }
+
+  DetectedDownloadLink? _processPotentialUrl(String rawText) {
+    final text = rawText.trim();
+    if (!text.startsWith('http://') && !text.startsWith('https://')) {
+      return null;
+    }
+
+    if (text == _lastCapturedUrl) return null;
+
+    // 1. Anti-Ad & Scam Shield Filter
+    if (!SmartUrlFilter.isCleanAndSafe(text)) {
+      debugPrint('[SmartDownloadCatcher] 🛡️ Rejected ad/tracker link: $text');
+      return null;
+    }
+
+    final cleanUrl = SmartUrlFilter.extractRealTargetUrl(text);
+    final isDownloadable = SmartUrlFilter.isDownloadableFileUrl(cleanUrl);
+    final isVideo = CloudExtractorService.isSocialVideoPlatform(cleanUrl);
+
+    if (isDownloadable || isVideo) {
+      _lastCapturedUrl = text;
+      final detected = DetectedDownloadLink(
+        rawUrl: text,
+        cleanUrl: cleanUrl,
+        inferredExtension: SmartUrlFilter.inferFileExtension(cleanUrl),
+        isVideoPlatform: isVideo,
+        detectedAt: DateTime.now(),
+      );
+
+      debugPrint('[SmartDownloadCatcher] 🎯 Download link caught: ${detected.displayName}');
+      _linkStreamController.add(detected);
+      return detected;
     }
     return null;
   }

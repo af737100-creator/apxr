@@ -9,11 +9,13 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <!-- =================================================================== -->
-    <!-- 2. خدمات العمل في الخلفية وتنزيل الملفات الكبيرة دون انقطاع          -->
+    <!-- 2. خدمات العمل في الخلفية والخدمة الأمامية لمنع قتل التطبيق (Xiaomi/Samsung) -->
     <!-- =================================================================== -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- =================================================================== -->
     <!-- 3. النوافذ المنبثقة العائمة (Overlay Bubble) لالتقاط الروابط         -->
@@ -21,7 +23,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- =================================================================== -->
-    <!-- 4. إشعارات التنزيل وسرعة النقل الحية (Android 13+)                   -->
+    <!-- 4. إشعارات شريط الحالة الدائمة وسرعة النقل (Android 13+)             -->
     <!-- =================================================================== -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -30,7 +32,6 @@
     <!-- =================================================================== -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <!-- توافقية مع الإصدارات القديمة من أندرويد 10 وما قبله -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
 
@@ -38,6 +39,7 @@
         android:label="HyperPulse"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:requestLegacyExternalStorage="true">
 
@@ -68,6 +70,18 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- =================================================================== -->
+        <!-- 6. تعريف الخدمة الأمامية الدائمة لمراقبة الحافظة ومنع قتل النظام     -->
+        <!-- =================================================================== -->
+        <service
+            android:name=".HyperPulseForegroundService"
+            android:foregroundServiceType="dataSync|specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Download link monitor and background file transfer" />
+        </service>
 
         <!-- تعريف محرك تضمين Flutter V2 -->
         <meta-data

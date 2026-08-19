@@ -143,7 +143,10 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         _downloadedBytes = event.downloadedBytes;
         _totalBytes = event.totalBytes;
         _bufferedRamMb = event.bufferedRamMb;
-        _activeThreads = event.segments.isNotEmpty ? event.segments.length : _activeThreads;
+        _activeThreads = event.isSingleStream ? 1 : (event.segments.isNotEmpty ? event.segments.length : _activeThreads);
+        if (event.statusText.isNotEmpty) {
+          _statusMessage = event.statusText;
+        }
 
         if (event.progressPercent >= 1.0) {
           _handleDownloadComplete();
