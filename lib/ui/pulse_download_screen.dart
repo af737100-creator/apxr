@@ -230,14 +230,14 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           deleteOriginal: false,
         );
 
-        if (result.success) {
-          await AndroidSystemBridge.scanMediaFile(result.outputPath);
+        if (result.success && result.outputPath != null) {
+          await AndroidSystemBridge.scanMediaFile(result.outputPath!);
           setState(() {
             _statusMessage = 'تم استخراج ملف MP3 وحفظه في المعرض والموسيقى';
           });
           _showCustomToast(
             title: 'تم استخراج MP3',
-            message: 'تم حفظ وتحديث ملف الصوت في المعرض: ${result.outputPath.split("/").last}',
+            message: 'تم حفظ وتحديث ملف الصوت في المعرض: ${result.outputPath!.split("/").last}',
             isSuccess: true,
           );
         } else {
