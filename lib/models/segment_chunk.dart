@@ -18,7 +18,7 @@ class SegmentChunk {
   final int startByte;
 
   /// Absolute ending byte offset in the target file (inclusive).
-  final int endByte;
+  int endByte;
 
   /// Number of bytes successfully downloaded and validated so far.
   int downloadedBytes;
