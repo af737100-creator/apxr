@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../models/device_metrics.dart';
 import '../models/download_task.dart';
-import '../models/media_stream_info.dart';
 import '../engine/turbo_download_service.dart';
 import '../engine/link_analyzer.dart';
 import '../engine/storage_path_resolver.dart';
@@ -14,6 +13,7 @@ import '../engine/audio_extractor_service.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/cloud_extractor_service.dart';
 import '../engine/smart_download_catcher.dart';
+import '../engine/android_system_bridge.dart';
 import '../utils/error_handler.dart';
 import 'painters/fiery_pulse_ring_painter.dart';
 import 'painters/cockpit_grid_painter.dart';
@@ -23,13 +23,12 @@ import 'components/overlay_bubble_widget.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
 ///
-/// Final Integration:
-/// 1. Automatic [SmartDownloadCatcher] background clipboard listener on boot.
-/// 2. Instant [OverlayBubbleWidget] triggering [_initiateTurboDownload] with zero manual typing.
-/// 3. Multi-source media resolution via [CloudExtractorService] (YouTube/TikTok/Instagram).
-/// 4. Ad-Shield and scam link filtering via [SmartUrlFilter].
-/// 5. Compliant Android 2026 Scoped Storage management via [StoragePathResolver].
-/// 6. High-fidelity Video-to-MP3 audio conversion via [AudioExtractorService].
+/// Upgraded Features:
+/// 1. Auto-enforcing `.mp4` extension for YouTube, TikTok, and social media videos.
+/// 2. Saving videos into `Movies/HyperPulse` so they appear instantly in Gallery/Photos.
+/// 3. MediaScannerConnection integration to notify Android MediaStore upon completion.
+/// 4. SYSTEM_ALERT_WINDOW ("Draw Over Other Apps") permission radar & direct settings button.
+/// 5. POST_NOTIFICATIONS status verification for background radar persistence.
 class PulseDownloadScreen extends StatefulWidget {
   final TurboDownloadService? customTurboService;
   final LinkAnalyzer? customLinkAnalyzer;
@@ -45,7 +44,7 @@ class PulseDownloadScreen extends StatefulWidget {
 }
 
 class _PulseDownloadScreenState extends State<PulseDownloadScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   // Brand Color Palette
   static const Color deepCarbon = Color(0xFF0A0A0C);
   static const Color fieryAmber = Color(0xFFFF4F00);
@@ -70,6 +69,11 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   // Active floating overlay link
   DetectedDownloadLink? _floatingLink;
 
+  // Permissions & OS States
+  bool _hasOverlayPermission = true;
+  bool _hasNotificationPermission = true;
+  bool _isCheckingPermissions = false;
+
   // State Telemetry
   bool _isDownloading = false;
   double _progress = 0.0;
@@ -87,6 +91,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
     _urlInputController = TextEditingController(
       text: 'https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso',
     );
@@ -131,7 +137,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       HapticFeedback.mediumImpact();
     });
 
-    // 5. Auto-resolve Scoped Storage Directory
+    // 5. Check permissions and storage
+    _checkSystemPermissions();
     _initStoragePath();
 
     // 6. Listen to real-time engine telemetry
@@ -155,9 +162,35 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     });
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkSystemPermissions();
+    }
+  }
+
+  Future<void> _checkSystemPermissions() async {
+    if (_isCheckingPermissions) return;
+    _isCheckingPermissions = true;
+    try {
+      final overlay = await AndroidSystemBridge.canDrawOverlays();
+      final notifs = await AndroidSystemBridge.areNotificationsEnabled();
+      if (mounted) {
+        setState(() {
+          _hasOverlayPermission = overlay;
+          _hasNotificationPermission = notifs;
+        });
+      }
+    } catch (e) {
+      debugPrint('[PulseDownloadScreen] Permission check warning: $e');
+    } finally {
+      _isCheckingPermissions = false;
+    }
+  }
+
   Future<void> _initStoragePath() async {
     try {
-      final path = await StoragePathResolver.resolveDownloadDirectory();
+      final path = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: _isVideo);
       if (mounted) {
         setState(() {
           _resolvedStorageDir = path;
@@ -171,7 +204,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   Future<void> _handleDownloadComplete() async {
     setState(() {
       _isDownloading = false;
-      _statusMessage = 'اكتمل التحميل بنجاح // تم التحقق من سلامة الملف';
+      _statusMessage = 'اكتمل التحميل بنجاح // تم حفظ الملف في المعرض';
     });
 
     final mediaSize = MediaQuery.of(context).size;
@@ -180,6 +213,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       count: 90,
     );
 
+    // 1. Trigger MediaScanner to index video/audio immediately in Android Gallery
+    if (_targetFilePath != null && File(_targetFilePath!).existsSync()) {
+      await AndroidSystemBridge.scanMediaFile(_targetFilePath!);
+    }
+
+    // 2. Audio Extraction if requested
     if (_extractMp3 && _targetFilePath != null && File(_targetFilePath!).existsSync()) {
       setState(() {
         _statusMessage = 'جاري استخراج ملف الصوت MP3 عبر FFmpeg...';
@@ -192,12 +231,13 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         );
 
         if (result.success) {
+          await AndroidSystemBridge.scanMediaFile(result.outputPath);
           setState(() {
-            _statusMessage = 'تم استخراج ملف MP3 بنجاح في مجلد التنزيلات';
+            _statusMessage = 'تم استخراج ملف MP3 وحفظه في المعرض والموسيقى';
           });
           _showCustomToast(
             title: 'تم استخراج MP3',
-            message: 'تم حفظ الملف الصوتي بنجاح: ${result.outputPath}',
+            message: 'تم حفظ وتحديث ملف الصوت في المعرض: ${result.outputPath.split("/").last}',
             isSuccess: true,
           );
         } else {
@@ -212,8 +252,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       }
     } else {
       _showCustomToast(
-        title: 'اكتمل التحميل',
-        message: 'تم حفظ الملف بنجاح في: $_resolvedStorageDir',
+        title: 'اكتمل التحميل // جاهز في المعرض',
+        message: 'تم حفظ الفيديو وتحديث المعرض: ${_targetFilePath?.split("/").last ?? ""}',
         isSuccess: true,
       );
     }
@@ -247,20 +287,17 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     setState(() {
       _isDownloading = true;
       _progress = 0.01;
-      _statusMessage = 'جاري فحص الرابط واختبار الأنوية...';
+      _statusMessage = 'جاري فحص الرابط واستخراج الوسائط...';
     });
 
     try {
-      if (_resolvedStorageDir.isEmpty) {
-        _resolvedStorageDir = await StoragePathResolver.resolveDownloadDirectory();
-      }
-
+      final isSocial = CloudExtractorService.isSocialVideoPlatform(cleanUrl);
       String directStreamUrl = cleanUrl;
       String inferredTitle = cleanUrl.split('/').last.split('?').first;
-      String inferredFormat = SmartUrlFilter.inferFileExtension(cleanUrl) ?? 'bin';
+      String inferredFormat = SmartUrlFilter.inferFileExtension(cleanUrl) ?? (isSocial ? 'mp4' : 'bin');
 
-      // 2. If it's a social/video platform (YouTube, TikTok, etc.), query CloudExtractorService
-      if (CloudExtractorService.isSocialVideoPlatform(cleanUrl)) {
+      // 2. If it's a social platform (YouTube, TikTok, etc.), query CloudExtractorService
+      if (isSocial) {
         setState(() {
           _statusMessage = 'استخراج رابط الفيديو المباشر من السيرفر السحابي...';
         });
@@ -269,23 +306,42 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         if (cloudResult.success) {
           directStreamUrl = cloudResult.directStreamUrl;
           inferredTitle = cloudResult.title;
-          inferredFormat = cloudResult.format;
+          inferredFormat = 'mp4';
         } else {
           throw Exception(cloudResult.errorMessage ?? 'فشل استخراج الفيديو السحابي');
         }
       }
 
-      final isVideo = AudioExtractorService.isVideoFormat(inferredTitle) ||
+      final isVideo = isSocial ||
+          AudioExtractorService.isVideoFormat(inferredTitle) ||
           inferredFormat.toLowerCase().contains('mp4') ||
           inferredFormat.toLowerCase().contains('webm');
 
+      // 3. Guarantee filename ends with .mp4 for video and sanitize illegal characters
+      if (isVideo) {
+        inferredFormat = 'mp4';
+        inferredTitle = inferredTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        if (inferredTitle.isEmpty) {
+          inferredTitle = 'HyperPulse_Video_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        }
+        if (!inferredTitle.toLowerCase().endsWith('.mp4')) {
+          inferredTitle = '$inferredTitle.mp4';
+        }
+      }
+
+      // 4. Resolve default save directory to Movies/HyperPulse for videos
+      _resolvedStorageDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: isVideo);
+      final finalFilePath = '$_resolvedStorageDir/$inferredTitle';
+
       setState(() {
         _isVideo = isVideo;
-        _targetFilePath = '$_resolvedStorageDir/$inferredTitle';
-        _statusMessage = 'تهيئة الأنوية المتوازية (${inferredFormat.toUpperCase()})';
+        _targetFilePath = finalFilePath;
+        _statusMessage = isSocial
+            ? 'بدء تيار التحميل المباشر (Movies/HyperPulse)'
+            : 'تهيئة الأنوية المتوازية (${inferredFormat.toUpperCase()})';
       });
 
-      // 3. Hardware profile
+      // 5. Hardware profile
       final deviceProfile = DeviceMetrics(
         totalRamMb: 8192,
         availableRamMb: 4096,
@@ -301,11 +357,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         destinationDirectory: _resolvedStorageDir,
       );
 
-      // 4. Launch parallel Isolate download
+      // 6. Launch download engine
       await _turboService.startDownload(
         task: task,
         deviceMetrics: deviceProfile,
         ramBufferThresholdMb: 64,
+        forceSingleStream: isSocial,
       );
     } catch (e) {
       final friendlyError = HyperPulseErrorHandler.getFriendlyMessage(e);
@@ -353,71 +410,83 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     title,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
                       fontWeight: FontWeight.bold,
+                      fontSize: 13,
                     ),
                   ),
+                  const SizedBox(height: 2),
                   Text(
                     message,
-                    style: const TextStyle(color: Color(0xFFCCC5C8), fontSize: 11),
+                    style: const TextStyle(
+                      color: Color(0xFFB5AFB2),
+                      fontSize: 11,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
           ],
         ),
-        duration: const Duration(seconds: 3),
       ),
     );
   }
 
   String get _formattedSpeed {
-    if (_currentSpeedBps <= 0) {
-      return _isDownloading ? '0.0 MB/s' : '12.5 MB/s';
+    if (_currentSpeedBps < 1024) {
+      return '${_currentSpeedBps.toStringAsFixed(0)} B/s';
+    } else if (_currentSpeedBps < 1024 * 1024) {
+      return '${(_currentSpeedBps / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(_currentSpeedBps / (1024 * 1024)).toStringAsFixed(2)} MB/s';
     }
-    final mbps = _currentSpeedBps / (1024 * 1024);
-    return '${mbps.toStringAsFixed(1)} MB/s';
   }
 
   String get _formattedDownloadedSize {
-    final mbDone = (_downloadedBytes / (1024 * 1024)).toStringAsFixed(1);
-    final mbTotal = (_totalBytes / (1024 * 1024)).toStringAsFixed(1);
-    return '$mbDone MB / $mbTotal MB';
+    if (_totalBytes <= 0) {
+      final mb = (_downloadedBytes / (1024 * 1024)).toStringAsFixed(1);
+      return '$mb MB / STREAM';
+    }
+    final dlMb = (_downloadedBytes / (1024 * 1024)).toStringAsFixed(1);
+    final totMb = (_totalBytes / (1024 * 1024)).toStringAsFixed(1);
+    return '$dlMb MB / $totMb MB';
   }
 
   @override
   void dispose() {
-    _catcherSub?.cancel();
-    _smartCatcher.stopListening();
+    WidgetsBinding.instance.removeObserver(this);
     _progressSub?.cancel();
-    _particleTicker.dispose();
+    _catcherSub?.cancel();
     _pulseController.dispose();
     _sparkRotationController.dispose();
+    _particleTicker.dispose();
     _particleController.dispose();
     _urlInputController.dispose();
+    _smartCatcher.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
-    final ringDimension = (size.width * 0.72).clamp(240.0, 340.0);
+    final mediaSize = MediaQuery.of(context).size;
+    final ringDimension = mediaSize.width * 0.68;
 
     return Scaffold(
       backgroundColor: deepCarbon,
       body: Stack(
         children: [
-          // 1. Cockpit HUD Grid
+          // 1. Background Cockpit Grid HUD
           Positioned.fill(
             child: CustomPaint(
-              painter: CockpitGridPainter(gridAlpha: 0.06),
+              painter: CockpitGridPainter(),
             ),
           ),
 
-          // 2. Kinetic Particles Overlay
+          // 2. Kinetic Particles System
           Positioned.fill(
-            child: ListenableBuilder(
-              listenable: _particleController,
+            child: AnimatedBuilder(
+              animation: _particleController,
               builder: (context, _) {
                 return CustomPaint(
                   painter: StealthParticlePainter(
@@ -431,10 +500,18 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           // 3. Main Cockpit HUD Stage
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Column(
                 children: [
                   _buildCockpitHeader(),
+
+                  // OVERLAY PERMISSION WARNING BANNER
+                  if (!_hasOverlayPermission)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: _buildOverlayPermissionBanner(),
+                    ),
+
                   const Spacer(),
 
                   // CENTER: Fiery Speed Ring
@@ -504,7 +581,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     ),
                   ),
 
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 14),
                   _buildCockpitTelemetryBar(),
                   const Spacer(),
 
@@ -523,16 +600,16 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                                 ? parts.sublist(parts.length - 2).join('/')
                                 : _resolvedStorageDir;
                           })()
-                        : 'Downloads/HyperPulse',
+                        : 'Movies/HyperPulse',
                   ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.1, end: 0),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                 ],
               ),
             ),
           ),
 
-          // 4. Smart Overlay Bubble (Final Automatic Linkage)
+          // 4. Smart Overlay Bubble (Automatic Linkage)
           if (_floatingLink != null)
             Positioned(
               top: 0,
@@ -541,7 +618,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
               child: OverlayBubbleWidget(
                 link: _floatingLink!,
                 onDownloadPressed: (detectedLink) {
-                  // Direct automated pipeline: load into controller & start turbo download
                   _urlInputController.text = detectedLink.cleanUrl;
                   _initiateTurboDownload(overrideUrl: detectedLink.cleanUrl);
                   setState(() => _floatingLink = null);
@@ -551,6 +627,59 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                 },
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOverlayPermissionBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF251610),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFF4F00).withOpacity(0.5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.warning_amber_rounded,
+            color: Color(0xFFFF4F00),
+            size: 22,
+          ),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              'لكي يعمل التقاط الروابط، يرجى الذهاب للإعدادات وتفعيل "الظهور فوق التطبيقات"',
+              style: TextStyle(
+                color: Color(0xFFFFD4C2),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton(
+            onPressed: () async {
+              await AndroidSystemBridge.openOverlaySettings();
+              await _checkSystemPermissions();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: fieryAmber,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              minimumSize: const Size(60, 32),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              elevation: 0,
+            ),
+            child: const Text(
+              'تفعيل',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          ),
         ],
       ),
     );
@@ -590,7 +719,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                   ),
                 ),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 200),
+                  constraints: const BoxConstraints(maxWidth: 190),
                   child: Text(
                     _statusMessage,
                     overflow: TextOverflow.ellipsis,
@@ -628,7 +757,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
               ),
               const SizedBox(width: 6),
               Text(
-                _isDownloading ? 'PARALLEL ACTIVE' : 'CATCHER ACTIVE',
+                _isDownloading ? 'PARALLEL ACTIVE' : 'RADAR ACTIVE',
                 style: TextStyle(
                   color: _isDownloading ? fieryAmber : const Color(0xFF4ADE80),
                   fontSize: 9,
@@ -657,19 +786,19 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         children: [
           _buildTelemetryItem(
             label: 'ISOLATES',
-            value: '$_activeThreads THREADS',
+            value: _isVideo ? '1 STREAM' : '$_activeThreads THREADS',
             accent: fieryAmber,
           ),
           Container(width: 1, height: 24, color: const Color(0xFF282426)),
           _buildTelemetryItem(
-            label: 'RAM CACHE',
-            value: '${_bufferedRamMb.toStringAsFixed(1)} / 64 MB',
+            label: 'LOCATION',
+            value: _isVideo ? 'MOVIES' : 'DOWNLOADS',
             accent: const Color(0xFFFF9D00),
           ),
           Container(width: 1, height: 24, color: const Color(0xFF282426)),
           _buildTelemetryItem(
-            label: 'SHIELD FILTER',
-            value: 'ANTI-AD ON',
+            label: 'GALLERY SCAN',
+            value: 'AUTO ON',
             accent: const Color(0xFF4ADE80),
           ),
         ],

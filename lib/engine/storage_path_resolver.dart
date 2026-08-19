@@ -2,9 +2,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'android_system_bridge.dart';
 
 /// Storage location category for modern Android Scoped Storage.
 enum StorageLocationType {
+  publicMovies,
   publicDownloads,
   appExternalSandbox,
   appInternalDocuments,
@@ -29,10 +31,49 @@ class StorageLocationInfo {
 class StoragePathResolver {
   static const String appSubfolder = 'HyperPulse';
 
-  /// Resolves the primary valid directory to save downloads.
-  /// Tries public Downloads first, falls back safely to App Sandbox.
-  static Future<String> resolveDownloadDirectory({bool preferPublicDownloads = true}) async {
+  /// Resolves the public Movies directory (`Movies/HyperPulse`) for direct Gallery indexing
+  static Future<String> resolveMoviesDirectory() async {
     try {
+      if (Platform.isAndroid) {
+        // 1. Query Native Android Bridge for Environment.DIRECTORY_MOVIES
+        final nativeMovies = await AndroidSystemBridge.getPublicMoviesPath();
+        if (nativeMovies != null && nativeMovies.isNotEmpty) {
+          final target = Directory(nativeMovies);
+          if (!await target.exists()) {
+            await target.create(recursive: true);
+          }
+          return target.path;
+        }
+
+        // 2. Standard Android /storage/emulated/0/Movies/HyperPulse
+        final fallbackDir = Directory('/storage/emulated/0/Movies/$appSubfolder');
+        if (!await fallbackDir.exists()) {
+          try {
+            await fallbackDir.create(recursive: true);
+            return fallbackDir.path;
+          } catch (_) {}
+        }
+      }
+
+      // 3. Fallback to standard Downloads
+      return await resolveDownloadDirectory(isMediaVideo: false);
+    } catch (e) {
+      debugPrint('[StoragePathResolver] resolveMoviesDirectory error: $e');
+      return await resolveDownloadDirectory(isMediaVideo: false);
+    }
+  }
+
+  /// Resolves the primary valid directory to save downloads.
+  /// If [isMediaVideo] is true, routes directly to `Movies/HyperPulse` for instant Gallery visibility.
+  static Future<String> resolveDownloadDirectory({
+    bool isMediaVideo = false,
+    bool preferPublicDownloads = true,
+  }) async {
+    try {
+      if (isMediaVideo && Platform.isAndroid) {
+        return await resolveMoviesDirectory();
+      }
+
       if (Platform.isAndroid) {
         if (preferPublicDownloads) {
           // 1. Attempt standard Public Downloads
@@ -45,7 +86,16 @@ class StoragePathResolver {
             return target.path;
           }
 
-          // 2. Fallback to External App Storage (Android/data/com.hyperpulse/files/Download)
+          // 2. Direct path to /storage/emulated/0/Download/HyperPulse
+          final directDownloads = Directory('/storage/emulated/0/Download/$appSubfolder');
+          if (!await directDownloads.exists()) {
+            try {
+              await directDownloads.create(recursive: true);
+              return directDownloads.path;
+            } catch (_) {}
+          }
+
+          // 3. Fallback to External App Storage
           final Directory? extDir = await getExternalStorageDirectory();
           if (extDir != null && await _isWritable(extDir.path)) {
             final target = Directory(p.join(extDir.path, 'Downloads'));
@@ -56,7 +106,7 @@ class StoragePathResolver {
           }
         }
 
-        // 3. Guaranteed Safe Sandbox (Application Documents)
+        // 4. Guaranteed Safe Sandbox (Application Documents)
         final Directory appDocDir = await getApplicationDocumentsDirectory();
         final target = Directory(p.join(appDocDir.path, 'Downloads'));
         if (!await target.exists()) {
@@ -81,7 +131,6 @@ class StoragePathResolver {
       }
     } catch (e) {
       debugPrint('[StoragePathResolver] Error resolving storage: $e');
-      // Emergency fallback
       final Directory tempDir = await getTemporaryDirectory();
       return tempDir.path;
     }
@@ -93,6 +142,17 @@ class StoragePathResolver {
 
     try {
       if (Platform.isAndroid) {
+        // Public Movies
+        final moviesPath = await resolveMoviesDirectory();
+        locations.add(
+          StorageLocationInfo(
+            path: moviesPath,
+            type: StorageLocationType.publicMovies,
+            isPublic: true,
+            displayName: 'معرض الفيديوهات (Movies/HyperPulse)',
+          ),
+        );
+
         // Public Downloads
         final Directory? downloads = await getDownloadsDirectory();
         if (downloads != null && await _isWritable(downloads.path)) {
