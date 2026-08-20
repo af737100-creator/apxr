@@ -134,7 +134,7 @@ class TurboDownloadService {
 
       String inferredFileName = 'download_file';
       if (contentDisposition != null && contentDisposition.contains('filename')) {
-        final match = RegExp(r'filename\*?=(?:UTF-8\'\')?["' + "'" + r']?([^"' + "'" + r';]+)["' + "'" + r']?')
+        final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?')
             .firstMatch(contentDisposition);
         if (match != null && match.group(1) != null) {
           inferredFileName = Uri.decodeFull(match.group(1)!.trim());
@@ -468,7 +468,7 @@ class TurboDownloadService {
 
     final contentDisposition = response.headers.value('content-disposition');
     if (contentDisposition != null && contentDisposition.contains('filename')) {
-      final match = RegExp(r'filename\*?=(?:UTF-8\'\')?["' + "'" + r']?([^"' + "'" + r';]+)["' + "'" + r']?').firstMatch(contentDisposition);
+      final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?').firstMatch(contentDisposition);
       if (match != null && match.group(1) != null) {
         var rawName = Uri.decodeFull(match.group(1)!.trim());
         rawName = rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
