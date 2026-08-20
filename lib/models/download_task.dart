@@ -17,7 +17,7 @@ enum DownloadStatus {
 class DownloadTask {
   final String id;
   final String sourceUrl;
-  final String fileName;
+  String fileName;
   final String destinationDirectory;
   int totalSizeBytes;
   int downloadedBytes;
@@ -47,6 +47,19 @@ class DownloadTask {
         createdAt = createdAt ?? DateTime.now();
 
   String get fullFilePath => '$destinationDirectory/$fileName';
+
+  String get fileExtension {
+    if (fileName.contains('.')) {
+      return fileName.split('.').last.toLowerCase();
+    }
+    return '';
+  }
+
+  bool get isApk => fileExtension == 'apk';
+  bool get isVideo => ['mp4', 'mkv', 'webm', 'mov', 'avi', 'flv', '3gp'].contains(fileExtension);
+  bool get isAudio => ['mp3', 'm4a', 'flac', 'wav', 'aac', 'ogg'].contains(fileExtension);
+  bool get isArchive => ['zip', 'rar', '7z', 'tar', 'gz', 'iso'].contains(fileExtension);
+  bool get isDocument => ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'epub'].contains(fileExtension);
 
   double get progress {
     if (totalSizeBytes <= 0) return 0.0;

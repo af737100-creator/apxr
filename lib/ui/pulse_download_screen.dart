@@ -22,6 +22,7 @@ import 'components/stealth_particle_system.dart';
 import 'components/overlay_bubble_widget.dart';
 import 'smart_stealth_browser.dart';
 import 'downloads_center_sheet.dart';
+import 'multi_downloads_screen.dart';
 import '../engine/download_manager_service.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
@@ -665,7 +666,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     onExtractMp3Changed: (val) => setState(() => _extractMp3 = val),
                     isVideoDetected: _isVideo,
                     onOpenBrowser: () => _openInAppBrowser(),
-                    onOpenDownloads: () => DownloadsCenterSheet.show(context),
+                    onOpenDownloads: () => MultiDownloadsScreen.open(context),
                     currentStoragePath: _resolvedStorageDir.isNotEmpty
                         ? (() {
                             final parts = _resolvedStorageDir.split('/');
@@ -814,7 +815,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           children: [
             // Downloads Center & Installed APKs Button
             GestureDetector(
-              onTap: () => DownloadsCenterSheet.show(context),
+              onTap: () => MultiDownloadsScreen.open(context),
               child: Container(
                 margin: const EdgeInsets.only(left: 6),
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -829,7 +830,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     Icon(Icons.folder_special, color: fieryAmber, size: 12),
                     SizedBox(width: 4),
                     Text(
-                      'التنزيلات',
+                      'التنزيلات المتعددة',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 9,

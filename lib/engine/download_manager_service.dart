@@ -30,6 +30,73 @@ class DownloadManagerService extends ChangeNotifier {
   List<DownloadTask> get activeTasks => List.unmodifiable(_activeTasks);
   List<DownloadTask> get completedTasks => List.unmodifiable(_completedTasks);
 
+  int get activeCount =>
+      _activeTasks.where((t) => t.status == DownloadStatus.downloading || t.status == DownloadStatus.analyzing || t.status == DownloadStatus.preparingSegments).length;
+
+  double get totalSpeedBytesPerSecond {
+    double total = 0.0;
+    for (final task in _activeTasks) {
+      if (task.status == DownloadStatus.downloading) {
+        total += task.speedBytesPerSecond;
+      }
+    }
+    return total;
+  }
+
+  String get formattedTotalSpeed {
+    final speed = totalSpeedBytesPerSecond;
+    if (speed < 1024) {
+      return '${speed.toStringAsFixed(0)} B/s';
+    } else if (speed < 1024 * 1024) {
+      return '${(speed / 1024).toStringAsFixed(1)} KB/s';
+    } else {
+      return '${(speed / (1024 * 1024)).toStringAsFixed(2)} MB/s';
+    }
+  }
+
+  /// Pauses all currently active downloads
+  void pauseAll() {
+    final activeIds = _activeTasks
+        .where((t) => t.status == DownloadStatus.downloading || t.status == DownloadStatus.analyzing)
+        .map((t) => t.id)
+        .toList();
+    for (final id in activeIds) {
+      pauseTask(id);
+    }
+  }
+
+  /// Resumes all paused downloads
+  void resumeAll() {
+    final pausedIds = _activeTasks
+        .where((t) => t.status == DownloadStatus.paused || t.status == DownloadStatus.failed)
+        .map((t) => t.id)
+        .toList();
+    for (final id in pausedIds) {
+      resumeTask(id);
+    }
+  }
+
+  /// Cancels all active downloads
+  void cancelAll() {
+    final allIds = _activeTasks.map((t) => t.id).toList();
+    for (final id in allIds) {
+      cancelTask(id);
+    }
+  }
+
+  /// Retries a failed download task
+  void retryTask(String taskId) {
+    final taskIndex = _activeTasks.indexWhere((t) => t.id == taskId);
+    if (taskIndex != -1) {
+      final task = _activeTasks[taskIndex];
+      task.status = DownloadStatus.downloading;
+      task.error = null;
+      task.downloadedBytes = 0;
+      notifyListeners();
+      _startTaskExecution(task);
+    }
+  }
+
   /// Scans destination folders to populate completed downloads on startup
   Future<void> refreshCompletedDownloadsFromStorage() async {
     try {

@@ -3,26 +3,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../engine/smart_url_filter.dart';
-import '../engine/cloud_extractor_service.dart';
-import 'downloads_center_sheet.dart';
+import '../engine/download_manager_service.dart';
+import 'multi_downloads_screen.dart';
 
-/// [SmartStealthBrowser] is an in-app integrated stealth web browser.
-/// It enables users to browse any video or download site (YouTube, MediaFire, TikTok, APK sites, etc.)
-/// and automatically intercepts download links and streams with 1-click Turbo download.
+/// [SmartStealthBrowser] is an integrated in-app web browser designed for flawless
+/// downloading from any source (MediaFire, APKPure, Uptodown, GitHub releases, Google Drive, Social Media, etc.).
+///
+/// Features:
+/// 1. Completely removed intrusive "التحميل الصاروخي" blocking popups.
+/// 2. Direct automatic background download enqueueing into Multi-Download queue.
+/// 3. Injected JavaScript listener catching clicks on download buttons & direct links seamlessly.
+/// 4. Live Multi-Downloads Badge Button in the top toolbar to track concurrent tasks.
 class SmartStealthBrowser extends StatefulWidget {
   final String initialUrl;
-  final Function(String downloadUrl, String? suggestedTitle) onDownloadCaught;
+  final Function(String downloadUrl, String? suggestedTitle)? onDownloadCaught;
 
   const SmartStealthBrowser({
     super.key,
     this.initialUrl = 'https://www.google.com',
-    required this.onDownloadCaught,
+    this.onDownloadCaught,
   });
 
   static Future<void> open({
     required BuildContext context,
     String initialUrl = 'https://www.google.com',
-    required Function(String downloadUrl, String? suggestedTitle) onDownloadCaught,
+    Function(String downloadUrl, String? suggestedTitle)? onDownloadCaught,
   }) {
     return Navigator.of(context).push(
       MaterialPageRoute(
@@ -46,21 +51,21 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
 
   late final WebViewController _webViewController;
   late final TextEditingController _urlBarController;
+  final DownloadManagerService _manager = DownloadManagerService();
 
   bool _isLoading = true;
   double _loadingProgress = 0.0;
-  String _currentTitle = 'المتصفح الداخلي // HyperPulse';
+  String _currentTitle = 'المتصفح // HyperPulse';
   String _currentUrl = '';
-  String? _sniffedDownloadUrl;
-  String? _sniffedDownloadTitle;
 
   final List<Map<String, String>> _quickBookmarks = [
+    {'name': 'MediaFire', 'url': 'https://www.mediafire.com', 'icon': '🔥'},
+    {'name': 'APKPure', 'url': 'https://apkpure.net', 'icon': '📦'},
+    {'name': 'Uptodown', 'url': 'https://en.uptodown.com/android', 'icon': '📲'},
     {'name': 'YouTube', 'url': 'https://m.youtube.com', 'icon': '▶️'},
     {'name': 'TikTok', 'url': 'https://www.tiktok.com', 'icon': '🎵'},
     {'name': 'Facebook', 'url': 'https://m.facebook.com', 'icon': '👥'},
     {'name': 'Instagram', 'url': 'https://www.instagram.com', 'icon': '📸'},
-    {'name': 'MediaFire', 'url': 'https://www.mediafire.com', 'icon': '🔥'},
-    {'name': 'APKPure', 'url': 'https://apkpure.net', 'icon': '📦'},
     {'name': 'Google', 'url': 'https://www.google.com', 'icon': '🔍'},
   ];
 
@@ -69,8 +74,13 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
     super.initState();
     _currentUrl = widget.initialUrl;
     _urlBarController = TextEditingController(text: widget.initialUrl);
+    _manager.addListener(_onManagerUpdate);
 
     _initWebViewController();
+  }
+
+  void _onManagerUpdate() {
+    if (mounted) setState(() {});
   }
 
   void _initWebViewController() {
@@ -78,7 +88,16 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(deepCarbon)
       ..setUserAgent(
-        'Mozilla/5.0 (Linux; Android 14; Mobile; rv:124.0) Gecko/124.0 Firefox/124.0 HyperPulseBrowser/3.0',
+        'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.122 Mobile Safari/537.36',
+      )
+      ..addJavaScriptChannel(
+        'HyperPulseDownloader',
+        onMessageReceived: (JavaScriptMessage message) {
+          final downloadUrl = message.message.trim();
+          if (downloadUrl.isNotEmpty && downloadUrl.startsWith('http')) {
+            _startDownloadDirectly(downloadUrl);
+          }
+        },
       )
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -97,7 +116,6 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                 _urlBarController.text = url;
                 _isLoading = true;
               });
-              _sniffUrl(url);
             }
           },
           onPageFinished: (url) async {
@@ -111,14 +129,15 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                   _currentTitle = title;
                 }
               });
-              _sniffUrl(url);
+
+              // Inject Smart Download Interceptor Script
+              _injectDownloadInterceptorScript();
             }
           },
           onNavigationRequest: (request) {
             final targetUrl = request.url;
-            // Sniff if clicked link is a direct downloadable file
             if (SmartUrlFilter.isDownloadableFileUrl(targetUrl)) {
-              _triggerDownloadCapture(targetUrl);
+              _startDownloadDirectly(targetUrl);
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
@@ -127,6 +146,38 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       );
 
     _webViewController.loadRequest(Uri.parse(_formatUrl(widget.initialUrl)));
+  }
+
+  void _injectDownloadInterceptorScript() {
+    const script = '''
+      (function() {
+        if (window.__hyperpulse_injected) return;
+        window.__hyperpulse_injected = true;
+
+        document.addEventListener('click', function(e) {
+          var target = e.target;
+          while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
+            target = target.parentElement;
+          }
+          if (target && target.tagName === 'A') {
+            var href = target.getAttribute('href');
+            if (href && (
+              href.match(/\\.(apk|xapk|zip|rar|7z|mp4|mkv|mp3|pdf|iso|exe)(\\?|\$)/i) ||
+              href.includes('download') ||
+              href.includes('mediafire.com/download') ||
+              href.includes('objects.githubusercontent.com')
+            )) {
+              if (href.startsWith('http')) {
+                if (window.HyperPulseDownloader) {
+                  window.HyperPulseDownloader.postMessage(href);
+                }
+              }
+            }
+          }
+        }, true);
+      })();
+    ''';
+    _webViewController.runJavaScript(script).catchError((_) {});
   }
 
   String _formatUrl(String input) {
@@ -142,75 +193,71 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
     return trimmed;
   }
 
-  void _sniffUrl(String url) {
-    if (SmartUrlFilter.isDownloadableFileUrl(url)) {
-      _triggerDownloadCapture(url);
-    } else if (CloudExtractorService.isSocialVideoPlatform(url)) {
-      setState(() {
-        _sniffedDownloadUrl = url;
-        _sniffedDownloadTitle = _currentTitle;
-      });
-    }
-  }
+  Future<void> _startDownloadDirectly(String url, {String? customTitle}) async {
+    HapticFeedback.mediumImpact();
 
-  void _triggerDownloadCapture(String url) {
-    HapticFeedback.heavyImpact();
-    setState(() {
-      _sniffedDownloadUrl = url;
-      _sniffedDownloadTitle = url.split('/').last.split('?').first;
-    });
+    try {
+      final task = await _manager.enqueueDownload(
+        url: url,
+        preferredTitle: customTitle ?? _currentTitle,
+      );
 
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: const Color(0xFF1B181A),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: fieryAmber, width: 1.5),
-        ),
-        content: Row(
-          children: [
-            const Icon(Icons.download_for_offline, color: fieryAmber, size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'تم التقاط ملف قابل للتحميل!',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                  Text(
-                    _sniffedDownloadTitle ?? url,
-                    style: const TextStyle(color: Color(0xFFB5AFB2), fontSize: 10),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: const Color(0xFF181519),
+            duration: const Duration(seconds: 4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: fieryAmber, width: 1.2),
             ),
-          ],
-        ),
-        action: SnackBarAction(
-          label: 'تحميل فوري ⚡',
-          textColor: fieryAmber,
-          onPressed: _startDownloadingSniffedFile,
-        ),
-        duration: const Duration(seconds: 6),
-      ),
-    );
-  }
-
-  void _startDownloadingSniffedFile() {
-    if (_sniffedDownloadUrl != null) {
-      widget.onDownloadCaught(_sniffedDownloadUrl!, _sniffedDownloadTitle);
-      Navigator.of(context).pop();
+            content: Row(
+              children: [
+                const Icon(Icons.bolt, color: fieryAmber, size: 22),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'بدأ التحميل المتزامن ⚡',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                      Text(
+                        task.fileName,
+                        style: const TextStyle(color: Color(0xFFB5AFB2), fontSize: 11),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            action: SnackBarAction(
+              label: 'التنزيلات (${_manager.activeCount})',
+              textColor: fieryAmber,
+              onPressed: () => MultiDownloadsScreen.open(context),
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في بدء التنزيل: $e'),
+            backgroundColor: const Color(0xFFEF4444),
+          ),
+        );
+      }
     }
   }
 
@@ -222,6 +269,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
 
   @override
   void dispose() {
+    _manager.removeListener(_onManagerUpdate);
     _urlBarController.dispose();
     super.dispose();
   }
@@ -250,20 +298,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
 
             // 4. Embedded WebView
             Expanded(
-              child: Stack(
-                children: [
-                  WebViewWidget(controller: _webViewController),
-
-                  // Floating Sniffer HUD Action Button
-                  if (_sniffedDownloadUrl != null)
-                    Positioned(
-                      bottom: 20,
-                      left: 20,
-                      right: 20,
-                      child: _buildFloatingSnifferHUD(),
-                    ),
-                ],
-              ),
+              child: WebViewWidget(controller: _webViewController),
             ),
 
             // 5. Bottom Navigation Bar
@@ -275,6 +310,8 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
   }
 
   Widget _buildTopAppBar() {
+    final activeCount = _manager.activeCount;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -312,7 +349,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                         fontFamily: 'monospace',
                       ),
                       decoration: const InputDecoration(
-                        hintText: 'ابحث في Google أو أدخل رابط موقع...',
+                        hintText: 'ابحث أو أدخل رابط للتحميل...',
                         hintStyle: TextStyle(color: Color(0xFF6B6568), fontSize: 11),
                         border: InputBorder.none,
                         isDense: true,
@@ -342,18 +379,51 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
               size: 20,
             ),
             onPressed: () {
-              if (_isLoading) {
-                // webview controller has no cancel, reload instead
-                _webViewController.reload();
-              } else {
-                _webViewController.reload();
-              }
+              _webViewController.reload();
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.folder_special_outlined, color: Colors.white, size: 20),
-            onPressed: () => DownloadsCenterSheet.show(context),
-            tooltip: 'مركز التنزيلات والتثبيت',
+
+          // Multi-Downloads Button with Live Active Badge
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                icon: Icon(
+                  Icons.download_rounded,
+                  color: activeCount > 0 ? fieryAmber : Colors.white,
+                  size: 22,
+                ),
+                onPressed: () => MultiDownloadsScreen.open(context),
+                tooltip: 'قمرة التنزيلات المتعددة',
+              ),
+              if (activeCount > 0)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: fieryAmber,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: fieryAmber.withOpacity(0.5),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                    child: Text(
+                      '$activeCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
         ],
       ),
@@ -403,92 +473,6 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
     );
   }
 
-  Widget _buildFloatingSnifferHUD() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1B181A).withOpacity(0.95),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: fieryAmber, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: fieryAmber.withOpacity(0.25),
-            blurRadius: 16,
-            spreadRadius: 2,
-          ),
-          BoxShadow(
-            color: Colors.black.withOpacity(0.8),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: fieryAmber.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.bolt, color: fieryAmber, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'جاهز للتحميل الصاروخي',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _sniffedDownloadTitle ?? _sniffedDownloadUrl ?? '',
-                  style: const TextStyle(
-                    color: Color(0xFFB5AFB2),
-                    fontSize: 10,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          ElevatedButton(
-            onPressed: _startDownloadingSniffedFile,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: fieryAmber,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              elevation: 4,
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.download, size: 16),
-                SizedBox(width: 4),
-                Text(
-                  'تحميل',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildBottomNavControls() {
     return Container(
       height: 48,
@@ -530,12 +514,12 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
             ],
           ),
 
-          // Sniff Active Page Button
+          // Direct Download Active Page Button
           TextButton.icon(
-            onPressed: () => _triggerDownloadCapture(_currentUrl),
-            icon: const Icon(Icons.radar, color: fieryAmber, size: 16),
+            onPressed: () => _startDownloadDirectly(_currentUrl),
+            icon: const Icon(Icons.download, color: fieryAmber, size: 16),
             label: const Text(
-              'التقاط الرابط الحالي',
+              'تنزيل رابط الصفحة ⚡',
               style: TextStyle(
                 color: fieryAmber,
                 fontSize: 11,

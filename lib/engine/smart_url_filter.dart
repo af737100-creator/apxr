@@ -107,14 +107,30 @@ class SmartUrlFilter {
     return rawUrl;
   }
 
-  /// Determines if a URL directly targets a downloadable file based on extension.
+  /// Determines if a URL directly targets a downloadable binary or media file.
   static bool isDownloadableFileUrl(String rawUrl) {
     try {
       final cleanUrl = extractRealTargetUrl(rawUrl);
       final uri = Uri.parse(cleanUrl);
+      final host = uri.host.toLowerCase();
       final path = uri.path.toLowerCase();
 
-      // Check file extension
+      // Known landing page patterns (DO NOT treat the HTML landing page as the download)
+      if (host.contains('mediafire.com') && path.endsWith('/file')) {
+        return false;
+      }
+      if (host.contains('github.com') && (path.contains('/releases/tag/') || path.contains('/tree/'))) {
+        return false;
+      }
+      if ((host.contains('apkpure') || host.contains('apkmirror') || host.contains('uptodown')) &&
+          !path.endsWith('.apk') &&
+          !path.endsWith('.xapk') &&
+          !host.startsWith('download') &&
+          !host.startsWith('d.')) {
+        return false;
+      }
+
+      // Check direct file extension at the end of the URL path
       final lastSegment = uri.pathSegments.isNotEmpty ? uri.pathSegments.last.toLowerCase() : '';
       if (lastSegment.contains('.')) {
         final ext = lastSegment.split('.').last.split('?').first;
@@ -123,9 +139,19 @@ class SmartUrlFilter {
         }
       }
 
-      // Check if URL ends with known downloadable extension
+      // Check if path directly ends with known extension
       for (final ext in downloadableExtensions) {
         if (path.endsWith('.$ext')) return true;
+      }
+
+      // Direct file CDNs
+      if (host.startsWith('download.') ||
+          host.startsWith('d.') ||
+          host.contains('objects.githubusercontent.com') ||
+          host.contains('apkpure.net') && path.contains('.apk')) {
+        for (final ext in downloadableExtensions) {
+          if (path.contains('.$ext')) return true;
+        }
       }
 
       return false;
