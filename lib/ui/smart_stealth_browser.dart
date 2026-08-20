@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/cloud_extractor_service.dart';
+import 'downloads_center_sheet.dart';
 
 /// [SmartStealthBrowser] is an in-app integrated stealth web browser.
 /// It enables users to browse any video or download site (YouTube, MediaFire, TikTok, APK sites, etc.)
@@ -348,6 +349,11 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                 _webViewController.reload();
               }
             },
+          ),
+          IconButton(
+            icon: const Icon(Icons.folder_special_outlined, color: Colors.white, size: 20),
+            onPressed: () => DownloadsCenterSheet.show(context),
+            tooltip: 'مركز التنزيلات والتثبيت',
           ),
         ],
       ),

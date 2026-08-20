@@ -9,8 +9,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.annotation.NonNull
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -128,6 +130,26 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(moviesDir.absolutePath)
                 }
+                // Installs downloaded APK file directly with FileProvider
+                "installApk" -> {
+                    val filePath = call.argument<String>("filePath")
+                    if (!filePath.isNullOrEmpty()) {
+                        val installed = installApkDirectly(filePath)
+                        result.success(installed)
+                    } else {
+                        result.error("INVALID_PATH", "APK path cannot be null or empty", null)
+                    }
+                }
+                // Opens any downloaded file (Video, Audio, Document, Zip) in external default app
+                "openFile" -> {
+                    val filePath = call.argument<String>("filePath")
+                    if (!filePath.isNullOrEmpty()) {
+                        val opened = openFileExternally(filePath)
+                        result.success(opened)
+                    } else {
+                        result.error("INVALID_PATH", "File path cannot be null or empty", null)
+                    }
+                }
                 else -> {
                     result.notImplemented()
                 }
@@ -190,6 +212,62 @@ class MainActivity : FlutterActivity() {
             action = HyperPulseForegroundService.ACTION_STOP_SERVICE
         }
         startService(intent)
+    }
+
+    private fun installApkDirectly(filePath: String): Boolean {
+        return try {
+            val file = File(filePath)
+            if (!file.exists()) return false
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                val uri = FileProvider.getUriForFile(
+                    this@MainActivity,
+                    "$packageName.fileprovider",
+                    file
+                )
+                setDataAndType(uri, "application/vnd.android.package-archive")
+            }
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    private fun openFileExternally(filePath: String): Boolean {
+        return try {
+            val file = File(filePath)
+            if (!file.exists()) return false
+
+            val extension = file.extension.lowercase()
+            val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: when (extension) {
+                "mp4", "mkv", "webm", "avi", "mov", "flv" -> "video/*"
+                "mp3", "m4a", "wav", "flac", "aac", "ogg" -> "audio/*"
+                "apk" -> "application/vnd.android.package-archive"
+                "zip", "rar", "7z", "tar", "gz" -> "application/zip"
+                "pdf" -> "application/pdf"
+                "jpg", "jpeg", "png", "webp", "gif" -> "image/*"
+                else -> "*/*"
+            }
+
+            val uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                file
+            )
+
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            startActivity(Intent.createChooser(intent, "فتح بواسطة"))
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     override fun onDestroy() {

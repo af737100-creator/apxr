@@ -386,6 +386,11 @@ class TurboDownloadService {
       throw Exception('تعذر فتح تيار تحميل الفيديو المباشر من السيرفر');
     }
 
+    final contentType = response.headers.value('content-type')?.toLowerCase() ?? '';
+    if (contentType.contains('text/html') || contentType.contains('text/plain')) {
+      throw Exception('الرابط المعطى هو صفحة ويب وليس تيار فيديو مباشر. يرجى فتح الرابط عبر المتصفح المدمج لالتقاطه');
+    }
+
     final streamContentLength = response.headers.value('content-length');
     if (streamContentLength != null && task.totalSizeBytes <= 0) {
       task.totalSizeBytes = int.tryParse(streamContentLength) ?? -1;
@@ -442,6 +447,19 @@ class TurboDownloadService {
     task.status = DownloadStatus.merging;
     await ramCache.flushToDisk();
     await ramCache.dispose();
+
+    // Verify downloaded video file integrity
+    if (task.fullFilePath.toLowerCase().endsWith('.mp4') ||
+        task.fullFilePath.toLowerCase().endsWith('.mkv') ||
+        task.fullFilePath.toLowerCase().endsWith('.webm')) {
+      if (task.downloadedBytes < 80 * 1024) {
+        try {
+          final f = File(task.fullFilePath);
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+        throw Exception('فشل التنزيل: تم استلام استجابة تالفة أو غير صالحة من السيرفر. افتح الرابط في المتصفح المدمج');
+      }
+    }
 
     singleSegment.status = ChunkStatus.completed;
     task.status = DownloadStatus.completed;

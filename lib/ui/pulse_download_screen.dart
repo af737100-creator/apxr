@@ -21,6 +21,8 @@ import 'components/glass_cockpit_input.dart';
 import 'components/stealth_particle_system.dart';
 import 'components/overlay_bubble_widget.dart';
 import 'smart_stealth_browser.dart';
+import 'downloads_center_sheet.dart';
+import '../engine/download_manager_service.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
 ///
@@ -254,10 +256,13 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     } else {
       _showCustomToast(
         title: 'اكتمل التحميل // جاهز في المعرض',
-        message: 'تم حفظ الفيديو وتحديث المعرض: ${_targetFilePath?.split("/").last ?? ""}',
+        message: 'تم حفظ وتحديث الملف: ${_targetFilePath?.split("/").last ?? ""}',
         isSuccess: true,
       );
     }
+
+    // Refresh downloads manager library
+    DownloadManagerService().refreshCompletedDownloadsFromStorage();
   }
 
   /// Opens the integrated stealth mini-browser with link sniffer
@@ -660,6 +665,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     onExtractMp3Changed: (val) => setState(() => _extractMp3 = val),
                     isVideoDetected: _isVideo,
                     onOpenBrowser: () => _openInAppBrowser(),
+                    onOpenDownloads: () => DownloadsCenterSheet.show(context),
                     currentStoragePath: _resolvedStorageDir.isNotEmpty
                         ? (() {
                             final parts = _resolvedStorageDir.split('/');
@@ -806,6 +812,35 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         ),
         Row(
           children: [
+            // Downloads Center & Installed APKs Button
+            GestureDetector(
+              onTap: () => DownloadsCenterSheet.show(context),
+              child: Container(
+                margin: const EdgeInsets.only(left: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E1A22),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: fieryAmber.withOpacity(0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.folder_special, color: fieryAmber, size: 12),
+                    SizedBox(width: 4),
+                    Text(
+                      'التنزيلات',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
             // Mini Browser Launcher in Header
             GestureDetector(
               onTap: () => _openInAppBrowser(),

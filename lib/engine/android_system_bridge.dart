@@ -86,4 +86,36 @@ class AndroidSystemBridge {
       return null;
     }
   }
+
+  /// Installs a downloaded APK file directly using Android PackageInstaller / FileProvider.
+  static Future<bool> installApk(String apkFilePath) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      debugPrint('[AndroidSystemBridge] 📦 Installing APK: $apkFilePath');
+      final bool? result = await _systemChannel.invokeMethod<bool>(
+        'installApk',
+        {'filePath': apkFilePath},
+      );
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] installApk error: $e');
+      return false;
+    }
+  }
+
+  /// Opens any downloaded file (Video, Audio, Document, Zip) in its default external app.
+  static Future<bool> openFile(String filePath) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      debugPrint('[AndroidSystemBridge] 📂 Opening file externally: $filePath');
+      final bool? result = await _systemChannel.invokeMethod<bool>(
+        'openFile',
+        {'filePath': filePath},
+      );
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] openFile error: $e');
+      return false;
+    }
+  }
 }

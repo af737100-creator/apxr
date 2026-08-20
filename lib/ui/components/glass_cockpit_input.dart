@@ -14,6 +14,7 @@ class GlassCockpitInput extends StatefulWidget {
   final String currentStoragePath;
   final VoidCallback? onStorageTap;
   final VoidCallback? onOpenBrowser;
+  final VoidCallback? onOpenDownloads;
 
   const GlassCockpitInput({
     super.key,
@@ -26,6 +27,7 @@ class GlassCockpitInput extends StatefulWidget {
     this.currentStoragePath = 'مجلد التنزيلات (Downloads/HyperPulse)',
     this.onStorageTap,
     this.onOpenBrowser,
+    this.onOpenDownloads,
   });
 
   @override
@@ -185,6 +187,36 @@ class _GlassCockpitInputState extends State<GlassCockpitInput> {
                                   'المتصفح الذكي',
                                   style: TextStyle(
                                     color: Color(0xFFFFD4A8),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                      // Downloads Center Icon Button
+                      if (widget.onOpenDownloads != null)
+                        GestureDetector(
+                          onTap: widget.onOpenDownloads,
+                          child: Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF221F21),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFFF4F00).withOpacity(0.4)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.folder_special, size: 12, color: Color(0xFFFF4F00)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'الملفات',
+                                  style: TextStyle(
+                                    color: Colors.white,
                                     fontSize: 10,
                                     fontWeight: FontWeight.bold,
                                   ),
