@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'smart_url_filter.dart';
 
 /// [CloudExtractedMedia] holds extracted direct stream information
@@ -36,7 +37,7 @@ class CloudExtractedMedia {
   }) {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(originalUrl);
     String inferredTitle = title ?? cleanUrl.split('/').last.split('?').first;
-    inferredTitle = _sanitizeFilename(inferredTitle, format);
+    inferredTitle = sanitizeFilename(inferredTitle, format);
 
     return CloudExtractedMedia(
       success: true,
@@ -63,7 +64,7 @@ class CloudExtractedMedia {
     );
   }
 
-  static String _sanitizeFilename(String rawTitle, String format) {
+  static String sanitizeFilename(String rawTitle, String format) {
     var clean = rawTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
     if (clean.isEmpty) {
       clean = 'HyperPulse_Media_${DateTime.now().millisecondsSinceEpoch}';
@@ -76,12 +77,13 @@ class CloudExtractedMedia {
   }
 }
 
-/// [CloudExtractorService] connects to cloud resolver APIs to extract direct video/audio
-/// streams from complex dynamic platforms (YouTube, TikTok, Instagram, Twitter/X, Facebook, etc.).
+/// [CloudExtractorService] extracts direct MP4 video streams natively (YouTubeExplode)
+/// and via redundant cloud resolution endpoints (Cobalt, Wuk, Invidious) for TikTok,
+/// Instagram, Twitter/X, Facebook, and Reels.
 class CloudExtractorService {
   final Dio _dio;
 
-  // Primary and secondary cloud resolution endpoints (Cobalt, Wuk, Invidious proxies)
+  // Cloud resolution endpoints (Cobalt & Wuk Proxies)
   final List<String> resolverEndpoints = [
     'https://api.cobalt.tools',
     'https://co.wuk.sh',
@@ -120,6 +122,12 @@ class CloudExtractorService {
         lower.contains('pin.it');
   }
 
+  /// Checks if URL is specifically YouTube
+  static bool isYouTubeUrl(String rawUrl) {
+    final lower = rawUrl.toLowerCase();
+    return lower.contains('youtube.com') || lower.contains('youtu.be');
+  }
+
   /// Extracts the direct MP4 stream at highest quality, ensuring a strictly valid .mp4 filename.
   Future<CloudExtractedMedia> extractDirectMedia(String webpageUrl) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
@@ -133,7 +141,48 @@ class CloudExtractorService {
       );
     }
 
-    // 2. Query Cloud Extractors
+    // 2. NATIVE YOUTUBE EXPLODE EXTRACTION (Zero-proxy direct stream)
+    if (isYouTubeUrl(cleanUrl)) {
+      try {
+        debugPrint('[CloudExtractorService] ⚡ Running Native YoutubeExplode for: $cleanUrl');
+        final yt = YoutubeExplode();
+        try {
+          final video = await yt.videos.get(cleanUrl);
+          final manifest = await yt.videos.streamsClient.getManifest(video.id);
+
+          // Find best muxed stream with both video & audio
+          final muxedStreams = manifest.muxed.sortByVideoQuality();
+          if (muxedStreams.isNotEmpty) {
+            final bestMuxed = muxedStreams.last;
+            final directStreamUrl = bestMuxed.url.toString();
+            var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+            if (!title.toLowerCase().endsWith('.mp4')) {
+              title = '$title.mp4';
+            }
+
+            debugPrint('[CloudExtractorService] ✅ YouTube native stream extracted: ${bestMuxed.videoQualityLabel}');
+            yt.close();
+            return CloudExtractedMedia(
+              success: true,
+              originalUrl: cleanUrl,
+              directStreamUrl: directStreamUrl,
+              title: title,
+              format: 'mp4',
+              quality: bestMuxed.videoQualityLabel,
+              thumbnailUrl: video.thumbnails.highResUrl,
+              estimatedSizeBytes: bestMuxed.size.totalBytes,
+              isDirectFallback: false,
+            );
+          }
+        } finally {
+          yt.close();
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] YoutubeExplode notice: $e (Falling back to cloud resolvers)');
+      }
+    }
+
+    // 3. Query Cloud Extractors (Cobalt / Wuk)
     for (final baseUrl in resolverEndpoints) {
       try {
         final endpoint = '$baseUrl/api/json';
@@ -143,8 +192,8 @@ class CloudExtractorService {
           endpoint,
           data: {
             'url': cleanUrl,
-            'vQuality': 'max', // 1080p/4K
-            'vCodec': 'h264',  // Maximum compatibility with Android MP4 hardware decoder
+            'vQuality': 'max',
+            'vCodec': 'h264',
             'filenamePattern': 'classic',
             'isAudioOnly': false,
           },
@@ -184,7 +233,7 @@ class CloudExtractorService {
       }
     }
 
-    // 3. Fallback: Direct stream fallback
+    // 4. Fallback: Direct stream fallback
     if (SmartUrlFilter.isCleanAndSafe(cleanUrl)) {
       debugPrint('[CloudExtractorService] Activating direct fallback for: $cleanUrl');
       final ext = SmartUrlFilter.inferFileExtension(cleanUrl) ?? 'mp4';
