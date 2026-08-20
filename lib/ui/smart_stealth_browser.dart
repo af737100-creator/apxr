@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/download_manager_service.dart';
+import '../engine/cloud_extractor_service.dart';
 import 'multi_downloads_screen.dart';
 
 /// [SmartStealthBrowser] is an integrated in-app web browser designed for flawless
