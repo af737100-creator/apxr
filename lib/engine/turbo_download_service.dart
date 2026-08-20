@@ -504,81 +504,79 @@ class TurboDownloadService {
       final chunk = chunks[i];
       chunk.status = ChunkStatus.downloading;
 
-      final config = ChunkWorkerConfig(
+      final initParams = ChunkWorkerInitParams(
         segmentIndex: i,
-        sourceUrl: task.sourceUrl,
+        url: task.sourceUrl,
         startByte: chunk.startByte,
         endByte: chunk.endByte,
-        sendPort: receivePort.sendPort,
+        mainSendPort: receivePort.sendPort,
       );
 
-      final isolate = await Isolate.spawn(
+      final isolate = await Isolate.spawn<ChunkWorkerInitParams>(
         chunkWorkerEntryPoint,
-        config,
+        initParams,
         debugName: 'HyperPulse_TurboWorker_$i',
       );
       workerIsolates.add(isolate);
     }
 
-    final subscription = receivePort.listen((message) async {
-      if (message is ChunkProgressMessage) {
+    final subscription = receivePort.listen((dynamic message) async {
+      if (message is ChunkWorkerPacket) {
         final chunk = task.segments[message.segmentIndex];
-        chunk.downloadedBytes = message.downloadedBytes;
 
-        if (message.dataChunk != null && message.dataChunk!.isNotEmpty) {
-          final chunkOffset = chunk.startByte + message.chunkOffset;
+        if (message.error != null) {
+          chunk.status = ChunkStatus.failed;
+          chunk.errorMessage = message.error;
+          debugPrint('[TurboDownloadService] Worker ${message.segmentIndex} error: ${message.error}');
+        } else if (message.isCompleted) {
+          chunk.status = ChunkStatus.completed;
+          chunk.downloadedBytes = chunk.totalExpectedBytes;
+          completedWorkers++;
+
+          if (completedWorkers == chunks.length) {
+            if (!downloadFinishedCompleter.isCompleted) {
+              downloadFinishedCompleter.complete();
+            }
+          }
+        } else if (message.data != null && message.data!.isNotEmpty) {
+          final int deltaBytes = message.data!.lengthInBytes;
+          chunk.downloadedBytes += deltaBytes;
+          task.downloadedBytes += deltaBytes;
+          bytesDownloadedSinceLastTick += deltaBytes;
+
           await ramCache.writeChunkData(
             segmentIndex: message.segmentIndex,
-            fileOffset: chunkOffset,
-            data: message.dataChunk!,
+            fileOffset: message.offset,
+            data: message.data!,
           );
-        }
 
-        task.downloadedBytes += message.bytesDelta;
-        bytesDownloadedSinceLastTick += message.bytesDelta;
+          final now = DateTime.now();
+          final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
+          if (elapsedMs >= 200) {
+            final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
+            task.speedBytesPerSecond = speedBps;
+            bytesDownloadedSinceLastTick = 0;
+            lastSpeedTick = now;
 
-        final now = DateTime.now();
-        final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
-        if (elapsedMs >= 200) {
-          final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
-          task.speedBytesPerSecond = speedBps;
-          bytesDownloadedSinceLastTick = 0;
-          lastSpeedTick = now;
+            final double progressPct = task.totalSizeBytes > 0
+                ? (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 1.0)
+                : 0.0;
 
-          final double progressPct = task.totalSizeBytes > 0
-              ? (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 1.0)
-              : 0.0;
-
-          _progressController.add(
-            TurboProgressEvent(
-              taskId: task.id,
-              totalBytes: task.totalSizeBytes,
-              downloadedBytes: task.downloadedBytes,
-              speedBytesPerSec: speedBps,
-              progressPercent: progressPct,
-              segments: List.from(task.segments),
-              bufferedRamMb: ramCache.currentBufferedMb,
-              isSingleStream: false,
-              statusText: '16 مسار متوازي فائق السرعة نشط',
-            ),
-          );
-        }
-      } else if (message is ChunkCompletedMessage) {
-        final chunk = task.segments[message.segmentIndex];
-        chunk.status = ChunkStatus.completed;
-        chunk.downloadedBytes = chunk.size;
-        completedWorkers++;
-
-        if (completedWorkers == chunks.length) {
-          if (!downloadFinishedCompleter.isCompleted) {
-            downloadFinishedCompleter.complete();
+            _progressController.add(
+              TurboProgressEvent(
+                taskId: task.id,
+                totalBytes: task.totalSizeBytes,
+                downloadedBytes: task.downloadedBytes,
+                speedBytesPerSec: speedBps,
+                progressPercent: progressPct,
+                segments: List.from(task.segments),
+                bufferedRamMb: ramCache.currentBufferedMb,
+                isSingleStream: false,
+                statusText: '16 مسار متوازي فائق السرعة نشط',
+              ),
+            );
           }
         }
-      } else if (message is ChunkErrorMessage) {
-        final chunk = task.segments[message.segmentIndex];
-        chunk.status = ChunkStatus.failed;
-        chunk.errorMessage = message.errorMessage;
-        debugPrint('[TurboDownloadService] Worker ${message.segmentIndex} error: ${message.errorMessage}');
       }
     });
 
