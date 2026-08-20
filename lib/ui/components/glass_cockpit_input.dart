@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 /// Glassmorphic Cockpit URL input panel with dark metallic action trigger,
-/// functional Clipboard auto-paste, and video-to-MP3 extraction toggle.
+/// functional Clipboard auto-paste, in-app mini browser button, and video-to-MP3 extraction toggle.
 class GlassCockpitInput extends StatefulWidget {
   final TextEditingController controller;
   final VoidCallback onStartDownload;
@@ -13,6 +13,7 @@ class GlassCockpitInput extends StatefulWidget {
   final bool isVideoDetected;
   final String currentStoragePath;
   final VoidCallback? onStorageTap;
+  final VoidCallback? onOpenBrowser;
 
   const GlassCockpitInput({
     super.key,
@@ -24,6 +25,7 @@ class GlassCockpitInput extends StatefulWidget {
     this.isVideoDetected = false,
     this.currentStoragePath = 'مجلد التنزيلات (Downloads/HyperPulse)',
     this.onStorageTap,
+    this.onOpenBrowser,
   });
 
   @override
@@ -53,13 +55,13 @@ class _GlassCockpitInputState extends State<GlassCockpitInput> {
                 side: const BorderSide(color: Color(0xFFFF4F00), width: 1),
               ),
               content: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Color(0xFFFF4F00), size: 18),
-                  const SizedBox(width: 10),
+                children: const [
+                  Icon(Icons.check_circle, color: Color(0xFFFF4F00), size: 18),
+                  SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'تم لصق الرابط من الحافظة بنجاح',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: TextStyle(color: Colors.white, fontSize: 12),
                     ),
                   ),
                 ],
@@ -80,10 +82,10 @@ class _GlassCockpitInputState extends State<GlassCockpitInput> {
                 side: const BorderSide(color: Color(0xFF5A5255), width: 1),
               ),
               content: Row(
-                children: [
-                  const Icon(Icons.info_outline, color: Color(0xFFFF9D00), size: 18),
-                  const SizedBox(width: 10),
-                  const Text(
+                children: const [
+                  Icon(Icons.info_outline, color: Color(0xFFFF9D00), size: 18),
+                  SizedBox(width: 10),
+                  Text(
                     'لا يوجد رابط منسوخ حالياً',
                     style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
@@ -132,7 +134,7 @@ class _GlassCockpitInputState extends State<GlassCockpitInput> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Header HUD Label & Actions
+              // 1. Header HUD Label & Action Buttons (Browser & Paste)
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -160,38 +162,72 @@ class _GlassCockpitInputState extends State<GlassCockpitInput> {
                     ],
                   ),
 
-                  // Real Functional Clipboard Paste Button
-                  GestureDetector(
-                    onTap: widget.isDownloading ? null : _handlePasteFromClipboard,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF221F21),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFFFF4F00).withOpacity(0.4)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFFFF4F00).withOpacity(0.1),
-                            blurRadius: 6,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Icon(Icons.content_paste, size: 12, color: Color(0xFFFF4F00)),
-                          SizedBox(width: 4),
-                          Text(
-                            'لصق الرابط',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                  Row(
+                    children: [
+                      // In-App Mini Stealth Browser Button
+                      if (widget.onOpenBrowser != null)
+                        GestureDetector(
+                          onTap: widget.isDownloading ? null : widget.onOpenBrowser,
+                          child: Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1B1920),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: const Color(0xFFFF9D00).withOpacity(0.5)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: const [
+                                Icon(Icons.language, size: 12, color: Color(0xFFFF9D00)),
+                                SizedBox(width: 4),
+                                Text(
+                                  'المتصفح الذكي',
+                                  style: TextStyle(
+                                    color: Color(0xFFFFD4A8),
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
+
+                      // Real Functional Clipboard Paste Button
+                      GestureDetector(
+                        onTap: widget.isDownloading ? null : _handlePasteFromClipboard,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF221F21),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: const Color(0xFFFF4F00).withOpacity(0.4)),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFFF4F00).withOpacity(0.1),
+                                blurRadius: 6,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Icon(Icons.content_paste, size: 12, color: Color(0xFFFF4F00)),
+                              SizedBox(width: 4),
+                              Text(
+                                'لصق الرابط',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),

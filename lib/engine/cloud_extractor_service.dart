@@ -77,29 +77,30 @@ class CloudExtractedMedia {
   }
 }
 
-/// [CloudExtractorService] extracts direct MP4 video streams natively (YouTubeExplode)
-/// and via redundant cloud resolution endpoints (Cobalt, Wuk, Invidious) for TikTok,
-/// Instagram, Twitter/X, Facebook, and Reels.
+/// [CloudExtractorService] connects to cloud resolver APIs & native YouTube engines
+/// with parallel racing resolvers (Fastest server wins with sub-second response).
 class CloudExtractorService {
   final Dio _dio;
 
-  // Cloud resolution endpoints (Cobalt & Wuk Proxies)
+  // Cloud resolution endpoints (Parallel Racing Pool)
   final List<String> resolverEndpoints = [
     'https://api.cobalt.tools',
     'https://co.wuk.sh',
     'https://cobalt-api.kwiatekm.tokyo',
+    'https://api.piped.video',
+    'https://inv.tux.pizza',
   ];
 
   CloudExtractorService({Dio? customDio})
       : _dio = customDio ??
             Dio(
               BaseOptions(
-                connectTimeout: const Duration(seconds: 12),
-                receiveTimeout: const Duration(seconds: 20),
+                connectTimeout: const Duration(seconds: 4),
+                receiveTimeout: const Duration(seconds: 5),
                 headers: {
                   'Accept': 'application/json',
                   'Content-Type': 'application/json',
-                  'User-Agent': 'HyperPulse-CloudExtractor/3.0 (Android; Low-Level Engine)',
+                  'User-Agent': 'Mozilla/5.0 (Linux; Android 14) HyperPulse/3.5',
                 },
               ),
             );
@@ -128,7 +129,21 @@ class CloudExtractorService {
     return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
 
-  /// Extracts the direct MP4 stream at highest quality, ensuring a strictly valid .mp4 filename.
+  /// Extracts YouTube 11-character video ID from any format
+  static String? extractYouTubeVideoId(String rawUrl) {
+    try {
+      final regExp = RegExp(
+        r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})',
+        caseSensitive: false,
+      );
+      final match = regExp.firstMatch(rawUrl);
+      return match?.group(1);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Extracts the direct MP4 stream at maximum velocity with 0-wait Instant YouTube Engine
   Future<CloudExtractedMedia> extractDirectMedia(String webpageUrl) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
 
@@ -141,97 +156,80 @@ class CloudExtractorService {
       );
     }
 
-    // 2. NATIVE YOUTUBE EXPLODE EXTRACTION (Zero-proxy direct stream)
+    // 2. NATIVE YOUTUBE EXPLODE EXTRACTION (Zero-wait instant Google CDN pipe)
     if (isYouTubeUrl(cleanUrl)) {
-      try {
-        debugPrint('[CloudExtractorService] ⚡ Running Native YoutubeExplode for: $cleanUrl');
-        final yt = YoutubeExplode();
+      final videoIdStr = extractYouTubeVideoId(cleanUrl);
+      if (videoIdStr != null && videoIdStr.isNotEmpty) {
         try {
-          final video = await yt.videos.get(cleanUrl);
-          final manifest = await yt.videos.streamsClient.getManifest(video.id);
+          debugPrint('[CloudExtractorService] ⚡ Zero-Wait YouTube Native Extraction for ID: $videoIdStr');
+          final yt = YoutubeExplode();
+          try {
+            final video = await yt.videos.get(VideoId(videoIdStr)).timeout(
+                  const Duration(seconds: 4),
+                );
+            final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoIdStr)).timeout(
+                  const Duration(seconds: 4),
+                );
 
-          // Find best muxed stream with both video & audio
-          final muxedStreams = manifest.muxed.sortByVideoQuality();
-          if (muxedStreams.isNotEmpty) {
-            final bestMuxed = muxedStreams.last;
-            final directStreamUrl = bestMuxed.url.toString();
-            var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-            if (!title.toLowerCase().endsWith('.mp4')) {
-              title = '$title.mp4';
-            }
+            final muxedStreams = manifest.muxed.sortByVideoQuality();
+            if (muxedStreams.isNotEmpty) {
+              final bestMuxed = muxedStreams.last;
+              var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+              if (!title.toLowerCase().endsWith('.mp4')) {
+                title = '$title.mp4';
+              }
 
-            debugPrint('[CloudExtractorService] ✅ YouTube native stream extracted: ${bestMuxed.videoQualityLabel}');
-            yt.close();
-            return CloudExtractedMedia(
-              success: true,
-              originalUrl: cleanUrl,
-              directStreamUrl: directStreamUrl,
-              title: title,
-              format: 'mp4',
-              quality: bestMuxed.videoQualityLabel,
-              thumbnailUrl: video.thumbnails.highResUrl,
-              estimatedSizeBytes: bestMuxed.size.totalBytes,
-              isDirectFallback: false,
-            );
-          }
-        } finally {
-          yt.close();
-        }
-      } catch (e) {
-        debugPrint('[CloudExtractorService] YoutubeExplode notice: $e (Falling back to cloud resolvers)');
-      }
-    }
-
-    // 3. Query Cloud Extractors (Cobalt / Wuk)
-    for (final baseUrl in resolverEndpoints) {
-      try {
-        final endpoint = '$baseUrl/api/json';
-        debugPrint('[CloudExtractorService] Querying cloud resolver: $endpoint');
-
-        final response = await _dio.post(
-          endpoint,
-          data: {
-            'url': cleanUrl,
-            'vQuality': 'max',
-            'vCodec': 'h264',
-            'filenamePattern': 'classic',
-            'isAudioOnly': false,
-          },
-        );
-
-        if (response.statusCode == 200 && response.data != null) {
-          final data = response.data;
-
-          if (data is Map<String, dynamic>) {
-            final status = data['status'];
-            final streamUrl = data['url'] ??
-                (data['picker'] is List && data['picker'].isNotEmpty ? data['picker'][0]['url'] : null);
-            var filename = data['filename']?.toString() ??
-                'HyperPulse_Video_${DateTime.now().millisecondsSinceEpoch}.mp4';
-
-            // Sanitize filename to avoid illegal characters on Android
-            filename = filename.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-            if (!filename.toLowerCase().endsWith('.mp4')) {
-              filename = '$filename.mp4';
-            }
-
-            if (status == 'stream' || status == 'success' || streamUrl != null) {
+              debugPrint('[CloudExtractorService] ⚡ Instant YouTube Direct Stream Ready: ${bestMuxed.videoQualityLabel}');
               return CloudExtractedMedia(
                 success: true,
                 originalUrl: cleanUrl,
-                directStreamUrl: streamUrl.toString(),
-                title: filename,
+                directStreamUrl: bestMuxed.url.toString(),
+                title: title,
                 format: 'mp4',
-                quality: '1080p (HD)',
+                quality: bestMuxed.videoQualityLabel,
+                thumbnailUrl: video.thumbnails.highResUrl,
+                estimatedSizeBytes: bestMuxed.size.totalBytes,
                 isDirectFallback: false,
               );
             }
+
+            final videoStreams = manifest.videoOnly.sortByVideoQuality();
+            if (videoStreams.isNotEmpty) {
+              final bestVideo = videoStreams.last;
+              var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+              if (!title.toLowerCase().endsWith('.mp4')) {
+                title = '$title.mp4';
+              }
+
+              return CloudExtractedMedia(
+                success: true,
+                originalUrl: cleanUrl,
+                directStreamUrl: bestVideo.url.toString(),
+                title: title,
+                format: 'mp4',
+                quality: bestVideo.videoQualityLabel,
+                thumbnailUrl: video.thumbnails.highResUrl,
+                estimatedSizeBytes: bestVideo.size.totalBytes,
+                isDirectFallback: false,
+              );
+            }
+          } finally {
+            yt.close();
           }
+        } catch (e) {
+          debugPrint('[CloudExtractorService] YoutubeExplode fast notice: $e (racing fallback)');
         }
-      } catch (e) {
-        debugPrint('[CloudExtractorService] Endpoint $baseUrl notice: $e');
       }
     }
+
+    // 3. Parallel Racing across Cloud Resolver Pool (Fastest response wins immediately)
+    try {
+      final futures = resolverEndpoints.map((baseUrl) => _resolveSingleEndpoint(baseUrl, cleanUrl));
+      final winningResult = await Future.any(futures).timeout(const Duration(seconds: 5));
+      if (winningResult != null && winningResult.success) {
+        return winningResult;
+      }
+    } catch (_) {}
 
     // 4. Fallback: Direct stream fallback
     if (SmartUrlFilter.isCleanAndSafe(cleanUrl)) {
@@ -245,7 +243,56 @@ class CloudExtractorService {
 
     return CloudExtractedMedia.failure(
       originalUrl: cleanUrl,
-      errorMessage: 'تعذر استخراج رابط الفيديو المباشر من السيرفر السحابي. يرجى التحقق من الرابط.',
+      errorMessage: 'تعذر استخراج رابط الفيديو المباشر تلقائياً. يمكنك فتحه وتحميله عبر المتصفح المدمج.',
     );
+  }
+
+  Future<CloudExtractedMedia?> _resolveSingleEndpoint(String baseUrl, String cleanUrl) async {
+    try {
+      final endpoint = '$baseUrl/api/json';
+      final response = await _dio.post(
+        endpoint,
+        data: {
+          'url': cleanUrl,
+          'vQuality': 'max',
+          'vCodec': 'h264',
+          'filenamePattern': 'classic',
+          'isAudioOnly': false,
+        },
+        options: Options(
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 4),
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        if (data is Map<String, dynamic>) {
+          final status = data['status'];
+          final streamUrl = data['url'] ??
+              (data['picker'] is List && data['picker'].isNotEmpty ? data['picker'][0]['url'] : null);
+          var filename = data['filename']?.toString() ??
+              'HyperPulse_Video_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+          filename = filename.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+          if (!filename.toLowerCase().endsWith('.mp4')) {
+            filename = '$filename.mp4';
+          }
+
+          if (status == 'stream' || status == 'success' || streamUrl != null) {
+            return CloudExtractedMedia(
+              success: true,
+              originalUrl: cleanUrl,
+              directStreamUrl: streamUrl.toString(),
+              title: filename,
+              format: 'mp4',
+              quality: '1080p (HD)',
+              isDirectFallback: false,
+            );
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
   }
 }

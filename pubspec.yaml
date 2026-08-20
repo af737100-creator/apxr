@@ -20,6 +20,9 @@ dependencies:
   # Native YouTube Extraction Engine
   youtube_explode_dart: ^2.2.1
 
+  # In-App Smart Stealth Browser with Download Interception
+  webview_flutter: ^4.7.0
+
   # Advanced Motion, Glitch & Fluid Micro-Interactions
   flutter_animate: ^4.5.0
 

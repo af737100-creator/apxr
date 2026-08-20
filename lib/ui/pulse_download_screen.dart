@@ -20,6 +20,7 @@ import 'painters/cockpit_grid_painter.dart';
 import 'components/glass_cockpit_input.dart';
 import 'components/stealth_particle_system.dart';
 import 'components/overlay_bubble_widget.dart';
+import 'smart_stealth_browser.dart';
 
 /// [PulseDownloadScreen] is the master high-tech Stealth Jet Cockpit UI for HyperPulse.
 ///
@@ -259,6 +260,26 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     }
   }
 
+  /// Opens the integrated stealth mini-browser with link sniffer
+  void _openInAppBrowser([String? initialUrl]) {
+    final target = (initialUrl ?? _urlInputController.text).trim();
+    SmartStealthBrowser.open(
+      context: context,
+      initialUrl: target.startsWith('http') ? target : 'https://www.google.com',
+      onDownloadCaught: (caughtUrl, title) {
+        _urlInputController.text = caughtUrl;
+        _initiateTurboDownload(overrideUrl: caughtUrl);
+        if (title != null && title.isNotEmpty) {
+          _showCustomToast(
+            title: 'تم التقاط الرابط من المتصفح ⚡',
+            message: 'بدء التحميل الفائق لـ: $title',
+            isSuccess: true,
+          );
+        }
+      },
+    );
+  }
+
   /// Primary launch handler for parallel turbo download with cloud extraction and smart filtering
   Future<void> _initiateTurboDownload({String? overrideUrl}) async {
     final rawInput = (overrideUrl ?? _urlInputController.text).trim();
@@ -371,12 +392,57 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         _statusMessage = friendlyError;
       });
 
-      _showCustomToast(
-        title: 'خطأ في التحميل',
-        message: friendlyError,
-        isSuccess: false,
-      );
+      _showErrorWithBrowserOption(friendlyError, cleanUrl);
     }
+  }
+
+  void _showErrorWithBrowserOption(String message, String targetUrl) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF1B1618),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFFFF4F00), width: 1.2),
+        ),
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Color(0xFFFF4F00), size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'تعذر الاستخراج المباشر',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    message,
+                    style: const TextStyle(color: Color(0xFFC7BFC2), fontSize: 10),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: 'فتح بالمتصفح 🌐',
+          textColor: const Color(0xFFFF4F00),
+          onPressed: () => _openInAppBrowser(targetUrl),
+        ),
+        duration: const Duration(seconds: 8),
+      ),
+    );
   }
 
   void _showCustomToast({required String title, required String message, required bool isSuccess}) {
@@ -593,6 +659,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                     extractMp3Enabled: _extractMp3,
                     onExtractMp3Changed: (val) => setState(() => _extractMp3 = val),
                     isVideoDetected: _isVideo,
+                    onOpenBrowser: () => _openInAppBrowser(),
                     currentStoragePath: _resolvedStorageDir.isNotEmpty
                         ? (() {
                             final parts = _resolvedStorageDir.split('/');
@@ -691,17 +758,20 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       children: [
         Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: fieryAmber.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: fieryAmber.withOpacity(0.3)),
-              ),
-              child: const Icon(
-                Icons.radar,
-                color: fieryAmber,
-                size: 16,
+            GestureDetector(
+              onTap: () => _openInAppBrowser(),
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: fieryAmber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: fieryAmber.withOpacity(0.4)),
+                ),
+                child: const Icon(
+                  Icons.language,
+                  color: fieryAmber,
+                  size: 18,
+                ),
               ),
             ),
             const SizedBox(width: 10),
@@ -719,7 +789,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                   ),
                 ),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 190),
+                  constraints: const BoxConstraints(maxWidth: 180),
                   child: Text(
                     _statusMessage,
                     overflow: TextOverflow.ellipsis,
@@ -734,40 +804,73 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
             ),
           ],
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: _isDownloading
-                ? fieryAmber.withOpacity(0.15)
-                : const Color(0xFF161416),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: _isDownloading ? fieryAmber : const Color(0xFF332F31),
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 6,
-                height: 6,
+        Row(
+          children: [
+            // Mini Browser Launcher in Header
+            GestureDetector(
+              onTap: () => _openInAppBrowser(),
+              child: Container(
+                margin: const EdgeInsets.only(left: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _isDownloading ? fieryAmber : const Color(0xFF5E575A),
-                  shape: BoxShape.circle,
+                  color: const Color(0xFF1E1A22),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFFF9D00).withOpacity(0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(Icons.public, color: Color(0xFFFF9D00), size: 12),
+                    SizedBox(width: 4),
+                    Text(
+                      'المتصفح',
+                      style: TextStyle(
+                        color: Color(0xFFFFD4A8),
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              Text(
-                _isDownloading ? 'PARALLEL ACTIVE' : 'RADAR ACTIVE',
-                style: TextStyle(
-                  color: _isDownloading ? fieryAmber : const Color(0xFF4ADE80),
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
-                  fontFamily: 'monospace',
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: _isDownloading
+                    ? fieryAmber.withOpacity(0.15)
+                    : const Color(0xFF161416),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _isDownloading ? fieryAmber : const Color(0xFF332F31),
                 ),
               ),
-            ],
-          ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: _isDownloading ? fieryAmber : const Color(0xFF5E575A),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _isDownloading ? 'PARALLEL ACTIVE' : 'RADAR ACTIVE',
+                    style: TextStyle(
+                      color: _isDownloading ? fieryAmber : const Color(0xFF4ADE80),
+                      fontSize: 9,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
     );
