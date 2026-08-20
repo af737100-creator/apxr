@@ -117,14 +117,40 @@ class DownloadManagerService extends ChangeNotifier {
 
       for (final file in scannedFiles) {
         final filename = p.basename(file.path);
-        // Avoid temporary and lock files
-        if (filename.startsWith('.') || filename.endsWith('.part') || filename.endsWith('.tmp')) {
+        // Avoid temporary, lock, partial, and state files
+        if (filename.startsWith('.') ||
+            filename.endsWith('.part') ||
+            filename.endsWith('.tmp') ||
+            filename.endsWith('.hyperpulse_part') ||
+            filename.endsWith('.pulse_state')) {
           continue;
         }
 
         final bool alreadyExists = _completedTasks.any((t) => t.fullFilePath == file.path);
         if (!alreadyExists) {
           final stat = file.statSync();
+          // Filter out 0-byte or corrupted broken files
+          if (stat.size <= 2048) {
+            continue;
+          }
+
+          // If APK, verify it is a valid zip/apk container
+          if (filename.toLowerCase().endsWith('.apk')) {
+            try {
+              final headerBytes = file.openSync().readSync(4);
+              if (headerBytes.length < 4 ||
+                  headerBytes[0] != 0x50 ||
+                  headerBytes[1] != 0x4B ||
+                  headerBytes[2] != 0x03 ||
+                  headerBytes[3] != 0x04) {
+                // Not a valid APK binary, skip
+                continue;
+              }
+            } catch (_) {
+              continue;
+            }
+          }
+
           final task = DownloadTask(
             id: 'local_${stat.modified.millisecondsSinceEpoch}_${filename.hashCode}',
             sourceUrl: '',
@@ -220,6 +246,9 @@ class DownloadManagerService extends ChangeNotifier {
       task.status = DownloadStatus.downloading;
       notifyListeners();
 
+      // Ensure foreground service is running so OS doesn't kill downloads on app switch/exit
+      await AndroidSystemBridge.startForegroundService();
+
       final subscription = _turboService.progressStream.listen((event) {
         if (event.taskId == task.id) {
           task.downloadedBytes = event.downloadedBytes;
@@ -270,6 +299,10 @@ class DownloadManagerService extends ChangeNotifier {
         }
       }
 
+      if (activeCount == 0) {
+        await AndroidSystemBridge.stopForegroundService();
+      }
+
       notifyListeners();
     } catch (e) {
       debugPrint('[DownloadManagerService] Download error: $e');
@@ -277,6 +310,11 @@ class DownloadManagerService extends ChangeNotifier {
       task.error = e.toString();
       _subscriptions[task.id]?.cancel();
       _subscriptions.remove(task.id);
+
+      if (activeCount == 0) {
+        await AndroidSystemBridge.stopForegroundService();
+      }
+
       notifyListeners();
     }
   }

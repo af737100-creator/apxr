@@ -47,6 +47,7 @@ class DownloadTask {
         createdAt = createdAt ?? DateTime.now();
 
   String get fullFilePath => '$destinationDirectory/$fileName';
+  String get tempFilePath => '$destinationDirectory/$fileName.hyperpulse_part';
 
   String get fileExtension {
     if (fileName.contains('.')) {

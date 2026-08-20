@@ -65,8 +65,8 @@ class HyperPulseForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("HyperPulse يراقب الروابط")
-            .setContentText("رادار التقاط الروابط نشط • انسخ أي رابط وسيط أو فيديو للتحميل الفوري")
+            .setContentTitle("HyperPulse Turbo Downloader ⚡")
+            .setContentText("محرك التنزيل السريع نشط في الخلفية • لن يتوقف التحميل عند تصغير التطبيق")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -96,7 +96,7 @@ class HyperPulseForegroundService : Service() {
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "HyperPulse::ForegroundServiceWakeLock"
             ).apply {
-                acquire(10 * 60 * 1000L) // Safe 10min initial lock
+                acquire(120 * 60 * 1000L) // 2 hours keep-alive while downloading
             }
         } catch (e: Exception) {
             e.printStackTrace()

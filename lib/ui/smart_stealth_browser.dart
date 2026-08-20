@@ -154,30 +154,132 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
         if (window.__hyperpulse_injected) return;
         window.__hyperpulse_injected = true;
 
+        function findDownloadLink(element) {
+          if (!element) return null;
+          // Check data-url attribute (common in Uptodown / APKPure)
+          var dataUrl = element.getAttribute('data-url') || element.getAttribute('data-href');
+          if (dataUrl && dataUrl.startsWith('http')) return dataUrl;
+
+          var href = element.getAttribute('href');
+          if (href && (
+            href.match(/\\.(apk|xapk|zip|rar|7z|mp4|mkv|mp3|pdf|iso|exe|tar|gz)(\\?|\$)/i) ||
+            href.includes('mediafire.com/download') ||
+            href.includes('mediafire.com/file/') ||
+            href.includes('objects.githubusercontent.com') ||
+            href.includes('download.uptodown.com') ||
+            href.includes('dw.uptodown.com') ||
+            href.includes('/post-download/') ||
+            href.includes('/download/apk')
+          )) {
+            return href;
+          }
+          return null;
+        }
+
         document.addEventListener('click', function(e) {
           var target = e.target;
           while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
             target = target.parentElement;
           }
-          if (target && target.tagName === 'A') {
-            var href = target.getAttribute('href');
-            if (href && (
-              href.match(/\\.(apk|xapk|zip|rar|7z|mp4|mkv|mp3|pdf|iso|exe)(\\?|\$)/i) ||
-              href.includes('download') ||
-              href.includes('mediafire.com/download') ||
-              href.includes('objects.githubusercontent.com')
-            )) {
-              if (href.startsWith('http')) {
-                if (window.HyperPulseDownloader) {
-                  window.HyperPulseDownloader.postMessage(href);
-                }
-              }
+          if (target) {
+            var directUrl = findDownloadLink(target);
+            if (directUrl && window.HyperPulseDownloader) {
+              window.HyperPulseDownloader.postMessage(directUrl);
             }
           }
         }, true);
       })();
     ''';
     _webViewController.runJavaScript(script).catchError((_) {});
+  }
+
+  Future<void> _extractAndDownloadFromPage() async {
+    HapticFeedback.mediumImpact();
+    // 1. If current page is a social / YouTube URL, let CloudExtractor handle it directly
+    if (CloudExtractorService.isSocialVideoPlatform(_currentUrl)) {
+      _startDownloadDirectly(_currentUrl);
+      return;
+    }
+
+    // 2. Try extracting direct binary download URL from the page DOM (Uptodown, Mediafire, APKPure, GitHub, etc.)
+    try {
+      final jsResult = await _webViewController.runJavaScriptReturningResult('''
+        (function() {
+          // Check for Uptodown direct download button
+          var uptodownBtn = document.querySelector('#detail-download-button, a[data-url*="uptodown"], a.button.download');
+          if (uptodownBtn) {
+            var uUrl = uptodownBtn.getAttribute('data-url') || uptodownBtn.getAttribute('href');
+            if (uUrl && uUrl.startsWith('http')) return uUrl;
+          }
+
+          // Check for MediaFire download button
+          var mfBtn = document.querySelector('#downloadButton, a[aria-label="Download file"], .download_link a');
+          if (mfBtn && mfBtn.href && mfBtn.href.startsWith('http')) {
+            return mfBtn.href;
+          }
+
+          // Check for standard APK / Media links on page
+          var links = document.querySelectorAll('a[href*=".apk"], a[href*=".zip"], a[href*=".mp4"], a[href*="download"]');
+          for (var i = 0; i < links.length; i++) {
+            var h = links[i].href;
+            if (h && (h.includes('.apk') || h.includes('.zip') || h.includes('.mp4') || h.includes('uptodown.com/dwn/'))) {
+              return h;
+            }
+          }
+
+          // Check for HTML5 video sources
+          var vid = document.querySelector('video source, video');
+          if (vid && vid.src && vid.src.startsWith('http')) {
+            return vid.src;
+          }
+
+          // If no direct link extracted, trigger click on primary download button on the page
+          var primaryBtn = document.querySelector('#detail-download-button, #downloadButton, a.button.download, button[type="submit"]');
+          if (primaryBtn) {
+            primaryBtn.click();
+            return 'CLICKED_PAGE_BUTTON';
+          }
+
+          return null;
+        })();
+      ''');
+
+      var foundUrl = jsResult.toString().replaceAll('"', '').trim();
+      if (foundUrl == 'CLICKED_PAGE_BUTTON') {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚡ جاري بدء التحميل عبر الزر الرئيسي في الصفحة...'),
+              backgroundColor: Color(0xFF1F1D24),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (foundUrl.isNotEmpty && foundUrl != 'null' && foundUrl.startsWith('http')) {
+        _startDownloadDirectly(foundUrl);
+        return;
+      }
+    } catch (e) {
+      debugPrint('[SmartStealthBrowser] DOM sniffing error: $e');
+    }
+
+    // Fallback if URL is already a direct file or social media
+    if (SmartUrlFilter.isDownloadableFileUrl(_currentUrl) || CloudExtractorService.isSocialVideoPlatform(_currentUrl)) {
+      _startDownloadDirectly(_currentUrl);
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('اضغط على زر التنزيل داخل الصفحة لتحميل الملف الحقيقي'),
+            backgroundColor: Color(0xFFEAB308),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    }
   }
 
   String _formatUrl(String input) {
@@ -516,10 +618,10 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
 
           // Direct Download Active Page Button
           TextButton.icon(
-            onPressed: () => _startDownloadDirectly(_currentUrl),
-            icon: const Icon(Icons.download, color: fieryAmber, size: 16),
+            onPressed: _extractAndDownloadFromPage,
+            icon: const Icon(Icons.bolt, color: fieryAmber, size: 16),
             label: const Text(
-              'تنزيل رابط الصفحة ⚡',
+              'استخراج وتنزيل ⚡',
               style: TextStyle(
                 color: fieryAmber,
                 fontSize: 11,

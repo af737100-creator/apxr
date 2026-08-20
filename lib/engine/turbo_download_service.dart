@@ -187,16 +187,16 @@ class TurboDownloadService {
           forceSingleStream: forceSingleStream,
         );
 
-        // Zero-Byte & Magic Bytes Inspection
+        // Zero-Byte & Magic Bytes Inspection on the completed part file
         final integrity = await ZeroByteShieldEngine.inspectFile(
-          filePath: task.fullFilePath,
+          filePath: task.tempFilePath,
           expectedExtension: task.fileExtension,
         );
 
         if (!integrity.isValid) {
           debugPrint('[TurboDownloadService] ⚠️ Integrity rejected: ${integrity.rejectionReason}. Attempt $attempts of $maxZeroByteRetries.');
           try {
-            final f = File(task.fullFilePath);
+            final f = File(task.tempFilePath);
             if (await f.exists()) await f.delete();
           } catch (_) {}
 
@@ -207,7 +207,20 @@ class TurboDownloadService {
           continue;
         }
 
+        // Atomically rename verified part file to final destination file
+        final tempFile = File(task.tempFilePath);
+        final finalFile = File(task.fullFilePath);
+        if (await finalFile.exists()) {
+          try {
+            await finalFile.delete();
+          } catch (_) {}
+        }
+        if (await tempFile.exists()) {
+          await tempFile.rename(task.fullFilePath);
+        }
+
         // Clean up checkpoint on success
+        await SmartResumeManager.deleteCheckpoint(task.tempFilePath);
         await SmartResumeManager.deleteCheckpoint(task.fullFilePath);
         return; // Success!
       } catch (e) {
@@ -321,7 +334,7 @@ class TurboDownloadService {
 
       task.totalSizeBytes = targetStreamInfo.size.totalBytes;
 
-      final targetFile = File(task.fullFilePath);
+      final targetFile = File(task.tempFilePath);
       if (!await targetFile.parent.exists()) {
         await targetFile.parent.create(recursive: true);
       }
@@ -338,7 +351,7 @@ class TurboDownloadService {
       final rawByteStream = yt.videos.streamsClient.get(targetStreamInfo);
 
       final ramCache = RamCacheManager(
-        targetFilePath: task.fullFilePath,
+        targetFilePath: task.tempFilePath,
         flushThresholdBytes: ramBufferThresholdMb * 1024 * 1024,
       );
       await ramCache.initialize(expectedTotalSize: task.totalSizeBytes);
@@ -426,7 +439,7 @@ class TurboDownloadService {
     task.status = DownloadStatus.downloading;
     task.threadCount = 1;
 
-    final targetFile = File(task.fullFilePath);
+    final targetFile = File(task.tempFilePath);
     if (!await targetFile.parent.exists()) {
       await targetFile.parent.create(recursive: true);
     }
@@ -441,7 +454,7 @@ class TurboDownloadService {
     task.segments.add(singleSegment);
 
     final ramCache = RamCacheManager(
-      targetFilePath: task.fullFilePath,
+      targetFilePath: task.tempFilePath,
       flushThresholdBytes: ramBufferThresholdMb * 1024 * 1024,
     );
     await ramCache.initialize(expectedTotalSize: task.totalSizeBytes);
@@ -579,7 +592,8 @@ class TurboDownloadService {
     task.status = DownloadStatus.preparingSegments;
 
     // 1. Check for previously saved Smart Resume checkpoint (.pulse_state)
-    final savedCheckpoint = await SmartResumeManager.loadCheckpoints(task.fullFilePath);
+    final savedCheckpoint = await SmartResumeManager.loadCheckpoints(task.tempFilePath) ??
+        await SmartResumeManager.loadCheckpoints(task.fullFilePath);
     List<SegmentChunk> chunks = [];
 
     if (savedCheckpoint != null &&
@@ -613,7 +627,7 @@ class TurboDownloadService {
     task.segments.addAll(chunks);
 
     final ramCache = RamCacheManager(
-      targetFilePath: task.fullFilePath,
+      targetFilePath: task.tempFilePath,
       flushThresholdBytes: ramBufferThresholdMb * 1024 * 1024,
     );
     await ramCache.initialize(expectedTotalSize: task.totalSizeBytes);
@@ -722,7 +736,7 @@ class TurboDownloadService {
             if (now.difference(lastCheckpointTick).inSeconds >= 3) {
               lastCheckpointTick = now;
               SmartResumeManager.persistCheckpoints(
-                targetFilePath: task.fullFilePath,
+                targetFilePath: task.tempFilePath,
                 sourceUrl: task.sourceUrl,
                 totalSizeBytes: task.totalSizeBytes,
                 segments: task.segments,

@@ -10,6 +10,32 @@ import 'package:flutter/services.dart';
 class AndroidSystemBridge {
   static const MethodChannel _systemChannel =
       MethodChannel('com.hyperpulse.app/android_system');
+  static const MethodChannel _serviceChannel =
+      MethodChannel('com.hyperpulse.app/foreground_service');
+
+  /// Starts the Android Foreground Service to keep CPU & Network alive when app is minimized.
+  static Future<bool> startForegroundService() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final bool? result = await _serviceChannel.invokeMethod<bool>('startService');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] startForegroundService error: $e');
+      return false;
+    }
+  }
+
+  /// Stops the Android Foreground Service when no active downloads remain.
+  static Future<bool> stopForegroundService() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final bool? result = await _serviceChannel.invokeMethod<bool>('stopService');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] stopForegroundService error: $e');
+      return false;
+    }
+  }
 
   /// Checks if the application has the "Draw Over Other Apps" (SYSTEM_ALERT_WINDOW) permission.
   static Future<bool> canDrawOverlays() async {

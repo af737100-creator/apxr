@@ -3,6 +3,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'smart_url_filter.dart';
+import 'dual_cloud_extractor.dart';
 
 /// [CloudExtractedMedia] holds extracted direct stream information
 class CloudExtractedMedia {
@@ -155,21 +156,26 @@ class CloudExtractorService {
     return lower.contains('twitter.com') || lower.contains('x.com');
   }
 
-  /// Extracts YouTube 11-character video ID from any format
+  /// Extracts YouTube 11-character video ID from any format (shorts, embed, youtu.be, standard)
   static String? extractYouTubeVideoId(String rawUrl) {
     try {
       final regExp = RegExp(
-        r'(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})',
+        r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|live\/|watch\?v=|watch\?.+&v=))([\w-]{11})',
         caseSensitive: false,
       );
       final match = regExp.firstMatch(rawUrl);
-      return match?.group(1);
+      if (match != null && match.group(1) != null) {
+        return match.group(1);
+      }
+      final fallbackExp = RegExp(r'([a-zA-Z0-9_-]{11})');
+      final fallbackMatch = fallbackExp.firstMatch(rawUrl);
+      return fallbackMatch?.group(1);
     } catch (_) {
       return null;
     }
   }
 
-  /// Extracts the direct MP4 stream at maximum velocity
+  /// Extracts the direct MP4 stream at maximum velocity with Dual Server Failover
   Future<CloudExtractedMedia> extractDirectMedia(String webpageUrl) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
 
@@ -182,7 +188,33 @@ class CloudExtractorService {
       );
     }
 
-    // 2. DEDICATED TIKTOK ENGINE (TikWM API + LoveTik) - 100% Reliable HD Watermark-free MP4
+    // 2. PRIMARY & SECONDARY DUAL SERVER EXTRACTOR (Railway yt-dlp -> Cobalt Failover)
+    if (isSocialVideoPlatform(cleanUrl)) {
+      debugPrint('[CloudExtractorService] 🛰️ Invoking DualCloudExtractor for: $cleanUrl');
+      final dualRes = await DualCloudExtractor.extract(cleanUrl);
+      if (dualRes.success && dualRes.directUrl != null) {
+        var title = (dualRes.title ?? 'HyperPulse_Media').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        final format = dualRes.format ?? 'mp4';
+        if (!title.toLowerCase().endsWith('.$format')) {
+          title = '$title.$format';
+        }
+
+        return CloudExtractedMedia(
+          success: true,
+          originalUrl: cleanUrl,
+          directStreamUrl: dualRes.directUrl!,
+          title: title,
+          format: format,
+          quality: dualRes.providerUsed ?? 'Dual Cloud Server',
+          estimatedSizeBytes: dualRes.size,
+          isDirectFallback: false,
+        );
+      } else {
+        debugPrint('[CloudExtractorService] ⚠️ Dual server extractor reported: ${dualRes.errorMessage}. Testing client-side fallbacks...');
+      }
+    }
+
+    // 3. ON-DEVICE DEDICATED TIKTOK ENGINE (TikWM API + LoveTik)
     if (isTikTokUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] 🎵 Activating Dedicated TikTok Engine for: $cleanUrl');
       final tikTokRes = await _extractTikTokDirect(cleanUrl);
@@ -191,7 +223,7 @@ class CloudExtractorService {
       }
     }
 
-    // 3. NATIVE YOUTUBE EXPLODE EXTRACTION (Zero-wait instant Google CDN pipe)
+    // 4. ON-DEVICE NATIVE YOUTUBE EXPLODE EXTRACTION (Direct Google CDN pipe)
     if (isYouTubeUrl(cleanUrl)) {
       final videoIdStr = extractYouTubeVideoId(cleanUrl);
       if (videoIdStr != null && videoIdStr.isNotEmpty) {
@@ -200,10 +232,10 @@ class CloudExtractorService {
           final yt = YoutubeExplode();
           try {
             final video = await yt.videos.get(VideoId(videoIdStr)).timeout(
-                  const Duration(seconds: 4),
+                  const Duration(seconds: 7),
                 );
             final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoIdStr)).timeout(
-                  const Duration(seconds: 4),
+                  const Duration(seconds: 7),
                 );
 
             final muxedStreams = manifest.muxed.sortByVideoQuality();
@@ -214,7 +246,6 @@ class CloudExtractorService {
                 title = '$title.mp4';
               }
 
-              debugPrint('[CloudExtractorService] ⚡ Instant YouTube Direct Stream Ready: ${bestMuxed.videoQualityLabel}');
               return CloudExtractedMedia(
                 success: true,
                 originalUrl: cleanUrl,
@@ -227,52 +258,23 @@ class CloudExtractorService {
                 isDirectFallback: false,
               );
             }
-
-            final videoStreams = manifest.videoOnly.sortByVideoQuality();
-            if (videoStreams.isNotEmpty) {
-              final bestVideo = videoStreams.last;
-              var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-              if (!title.toLowerCase().endsWith('.mp4')) {
-                title = '$title.mp4';
-              }
-
-              return CloudExtractedMedia(
-                success: true,
-                originalUrl: cleanUrl,
-                directStreamUrl: bestVideo.url.toString(),
-                title: title,
-                format: 'mp4',
-                quality: bestVideo.videoQualityLabel,
-                thumbnailUrl: video.thumbnails.highResUrl,
-                estimatedSizeBytes: bestVideo.size.totalBytes,
-                isDirectFallback: false,
-              );
-            }
           } finally {
             yt.close();
           }
         } catch (e) {
-          debugPrint('[CloudExtractorService] YoutubeExplode fast notice: $e (racing fallback)');
+          debugPrint('[CloudExtractorService] YoutubeExplode fast notice: $e');
         }
       }
     }
 
-    // 4. DEDICATED INSTAGRAM ENGINE
+    // 5. ON-DEVICE INSTAGRAM / TWITTER PARSERS
     if (isInstagramUrl(cleanUrl)) {
-      debugPrint('[CloudExtractorService] 📸 Activating Instagram Direct Engine for: $cleanUrl');
       final igRes = await _extractInstagramDirect(cleanUrl);
-      if (igRes != null && igRes.success) {
-        return igRes;
-      }
+      if (igRes != null && igRes.success) return igRes;
     }
-
-    // 5. DEDICATED TWITTER/X ENGINE
     if (isTwitterUrl(cleanUrl)) {
-      debugPrint('[CloudExtractorService] 🐦 Activating Twitter Direct Engine for: $cleanUrl');
       final twRes = await _extractTwitterDirect(cleanUrl);
-      if (twRes != null && twRes.success) {
-        return twRes;
-      }
+      if (twRes != null && twRes.success) return twRes;
     }
 
     // 6. Parallel Racing across Cobalt Multi-Server Pool
