@@ -52,6 +52,7 @@ class TurboDownloadService {
       StreamController<TurboProgressEvent>.broadcast();
 
   Stream<TurboProgressEvent> get onProgress => _progressController.stream;
+  Stream<TurboProgressEvent> get progressStream => _progressController.stream;
 
   TurboDownloadService({
     Dio? customDio,
