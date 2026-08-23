@@ -104,16 +104,6 @@ class ZeroByteShieldEngine {
               rejectionReason: 'توقيع الملف لا يطابق حزمة APK صالحة (Corrupted APK signature).',
             );
           }
-        } else if (ext == 'mp4' || ext == 'm4v') {
-          if (detectedType != MagicFileType.mp4Video && detectedType != MagicFileType.unknown) {
-            return FileIntegrityResult(
-              isValid: false,
-              totalBytes: size,
-              detectedType: detectedType,
-              headerBytes: header,
-              rejectionReason: 'توقيع الملف لا يطابق تيار MP4 صالح.',
-            );
-          }
         }
       }
 
@@ -139,15 +129,18 @@ class ZeroByteShieldEngine {
   static MagicFileType detectTypeFromBytes(Uint8List header) {
     if (header.isEmpty) return MagicFileType.unknown;
 
-    // Check for HTML: '<!doc', '<html', '<?xml', '<head', '<body'
-    final String asciiPreview = String.fromCharCodes(header.take(32)).toLowerCase();
+    // Check for HTML / Error text: '<!doc', '<html', '<?xml', '<head', '<body', '403 Forbidden', 'Access Denied'
+    final String asciiPreview = String.fromCharCodes(header.take(64)).toLowerCase();
     if (asciiPreview.contains('<!doctype') ||
         asciiPreview.contains('<html') ||
         asciiPreview.contains('<script') ||
         asciiPreview.contains('<body') ||
         asciiPreview.contains('{"error"') ||
         asciiPreview.contains('<html>') ||
-        asciiPreview.contains('<?xml')) {
+        asciiPreview.contains('<?xml') ||
+        asciiPreview.contains('403 forbidden') ||
+        asciiPreview.contains('access denied') ||
+        asciiPreview.contains('error 404')) {
       return MagicFileType.htmlOrWebpage;
     }
 
@@ -159,9 +152,15 @@ class ZeroByteShieldEngine {
       return MagicFileType.apkOrZip;
     }
 
-    // MP4 Video ('ftyp' at offset 4 to 8)
-    if (header.length >= 12) {
-      if (header[4] == 0x66 && header[5] == 0x74 && header[6] == 0x79 && header[7] == 0x70) {
+    // MP4 Video ('ftyp' or 'moov' or 'mdat' or 'free' or 'skip' or 'wide')
+    if (header.length >= 8) {
+      final boxType = String.fromCharCodes(header.sublist(4, 8)).toLowerCase();
+      if (boxType == 'ftyp' ||
+          boxType == 'moov' ||
+          boxType == 'mdat' ||
+          boxType == 'free' ||
+          boxType == 'skip' ||
+          boxType == 'wide') {
         return MagicFileType.mp4Video;
       }
     }
@@ -175,7 +174,37 @@ class ZeroByteShieldEngine {
       return MagicFileType.mkvVideo;
     }
 
-    // MP3 (ID3 header: 0x49 0x44 0x33 or Sync word 0xFF 0xFB)
+    // MPEG-TS Sync byte (0x47)
+    if (header.isNotEmpty && header[0] == 0x47) {
+      return MagicFileType.mp4Video;
+    }
+
+    // FLV Video
+    if (header.length >= 3 && header[0] == 0x46 && header[1] == 0x4C && header[2] == 0x56) {
+      return MagicFileType.mp4Video;
+    }
+
+    // RIFF (AVI or WAV)
+    if (header.length >= 12 &&
+        header[0] == 0x52 &&
+        header[1] == 0x49 &&
+        header[2] == 0x46 &&
+        header[3] == 0x46) {
+      final riffType = String.fromCharCodes(header.sublist(8, 12)).toLowerCase();
+      if (riffType == 'avi ') return MagicFileType.mp4Video;
+      if (riffType == 'wave') return MagicFileType.mp3Audio;
+    }
+
+    // OggS (Ogg / Opus / Vorbis)
+    if (header.length >= 4 &&
+        header[0] == 0x4F &&
+        header[1] == 0x67 &&
+        header[2] == 0x67 &&
+        header[3] == 0x53) {
+      return MagicFileType.mp3Audio;
+    }
+
+    // MP3 (ID3 header: 0x49 0x44 0x33 or Sync word 0xFF 0xFB/F3/F2)
     if (header.length >= 3 && header[0] == 0x49 && header[1] == 0x44 && header[2] == 0x33) {
       return MagicFileType.mp3Audio;
     }

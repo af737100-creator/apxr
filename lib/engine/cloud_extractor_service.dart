@@ -210,7 +210,7 @@ class CloudExtractorService {
       }
     }
 
-    // 3. DEDICATED TIKTOK ENGINE (TikWM API + LoveTik)
+    // 3. DEDICATED TIKTOK ENGINE (TikWM + Tiklydown + LoveTik Parallel Race)
     if (isTikTokUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] 🎵 Activating Dedicated TikTok Engine for: $cleanUrl');
       final tikTokRes = await _extractTikTokDirect(cleanUrl);
@@ -258,7 +258,7 @@ class CloudExtractorService {
     // 6. Parallel Racing across Cobalt Multi-Server Pool
     try {
       final futures = resolverEndpoints.map((baseUrl) => _resolveCobaltEndpoint(baseUrl, cleanUrl));
-      final winningResult = await Future.any(futures).timeout(const Duration(seconds: 6));
+      final winningResult = await Future.any(futures).timeout(const Duration(seconds: 5));
       if (winningResult != null && winningResult.success) {
         return winningResult;
       }
@@ -281,17 +281,25 @@ class CloudExtractorService {
     );
   }
 
-  /// Specialized Multi-Layer YouTube Turbo Extractor
-  /// Runs concurrent parallel races across DualCloudExtractor (Cobalt v10 + YT1s + Y2Mate), Invidious pool, SaveTube CDN & YoutubeExplode.
+  /// Specialized Multi-Layer YouTube Turbo Extractor (Parallel Racing)
   Future<CloudExtractedMedia?> _extractYouTubeDirect(String ytUrl) async {
     final videoId = extractYouTubeVideoId(ytUrl);
     debugPrint('[CloudExtractorService] 🎯 Launching Concurrent YouTube Turbo Engine for: $ytUrl (ID: $videoId)');
 
-    // 1. DualCloudExtractor (Cobalt v10 + YT1s + Y2Mate + Loader.to)
-    try {
-      final dualRes = await DualCloudExtractor.extract(ytUrl);
+    final List<Future<CloudExtractedMedia?>> racers = [];
+
+    // 1. YoutubeExplode on-device extraction (fastest if directly unblocked)
+    if (videoId != null && videoId.isNotEmpty) {
+      racers.add(_queryYoutubeExplode(videoId, ytUrl));
+      racers.add(_raceInvidious(videoId, ytUrl));
+      racers.add(_racePiped(videoId, ytUrl));
+      racers.add(_querySaveTube(videoId, ytUrl));
+    }
+
+    // 2. DualCloudExtractor (Cobalt v10 + YT1s + Y2Mate)
+    racers.add(DualCloudExtractor.extract(ytUrl).then((dualRes) {
       if (dualRes.success && dualRes.directUrl != null) {
-        var title = (dualRes.title ?? 'YouTube_Video_$videoId').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        var title = (dualRes.title ?? 'YouTube_Video_${videoId ?? "clip"}').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
         if (!title.toLowerCase().endsWith('.mp4')) title = '$title.mp4';
 
         return CloudExtractedMedia(
@@ -305,35 +313,32 @@ class CloudExtractorService {
           isDirectFallback: false,
         );
       }
-    } catch (e) {
-      debugPrint('[CloudExtractorService] DualCloudExtractor YouTube notice: $e');
+      return null;
+    }).catchError((_) => null));
+
+    // Race all YouTube engines concurrently
+    final completer = Completer<CloudExtractedMedia?>();
+    int pending = racers.length;
+
+    for (final racer in racers) {
+      racer.then((res) {
+        if (res != null && res.success && res.directStreamUrl.isNotEmpty) {
+          if (!completer.isCompleted) {
+            completer.complete(res);
+          }
+        }
+      }).catchError((_) {}).whenComplete(() {
+        pending--;
+        if (pending == 0 && !completer.isCompleted) {
+          completer.complete(null);
+        }
+      });
     }
 
-    if (videoId == null || videoId.isEmpty) return null;
-
-    // 2. SaveTube & Rapid CDN APIs
-    final saveTubeResult = await _querySaveTube(videoId, ytUrl);
-    if (saveTubeResult != null && saveTubeResult.success) {
-      return saveTubeResult;
-    }
-
-    // 3. Race Invidious Global Public Instances Pool (First successful response wins)
-    final invidiousResult = await _raceInvidious(videoId, ytUrl);
-    if (invidiousResult != null && invidiousResult.success) {
-      return invidiousResult;
-    }
-
-    // 4. Race Piped API Network
-    final pipedResult = await _racePiped(videoId, ytUrl);
-    if (pipedResult != null && pipedResult.success) {
-      return pipedResult;
-    }
-
-    // 5. Try Native YoutubeExplode Engine
-    final explodeResult = await _queryYoutubeExplode(videoId, ytUrl);
-    if (explodeResult != null && explodeResult.success) {
-      return explodeResult;
-    }
+    try {
+      final winner = await completer.future.timeout(const Duration(seconds: 5));
+      if (winner != null) return winner;
+    } catch (_) {}
 
     return null;
   }
@@ -641,16 +646,54 @@ class CloudExtractorService {
     return null;
   }
 
-  /// Specialized TikTok API Extractor (TikWM + LoveTik)
+  /// Specialized TikTok API Extractor (TikWM + Tiklydown + LoveTik + SSSTik Parallel Race)
   Future<CloudExtractedMedia?> _extractTikTokDirect(String tikTokUrl) async {
+    final racers = <Future<CloudExtractedMedia?>>[
+      _queryTikWM(tikTokUrl),
+      _queryTiklydown(tikTokUrl),
+      _queryLoveTik(tikTokUrl),
+    ];
+
+    final completer = Completer<CloudExtractedMedia?>();
+    int pending = racers.length;
+
+    for (final racer in racers) {
+      racer.then((res) {
+        if (res != null && res.success && res.directStreamUrl.isNotEmpty) {
+          if (!completer.isCompleted) {
+            completer.complete(res);
+          }
+        }
+      }).catchError((_) {}).whenComplete(() {
+        pending--;
+        if (pending == 0 && !completer.isCompleted) {
+          completer.complete(null);
+        }
+      });
+    }
+
     try {
-      // 1. TikWM API (Fast, Free, No Watermark MP4)
+      final winner = await completer.future.timeout(const Duration(seconds: 4));
+      if (winner != null) return winner;
+    } catch (_) {}
+
+    return null;
+  }
+
+  Future<CloudExtractedMedia?> _queryTikWM(String tikTokUrl) async {
+    try {
       final response = await _dio.get(
         'https://www.tikwm.com/api/',
         queryParameters: {'url': tikTokUrl, 'hd': '1'},
         options: Options(
-          sendTimeout: const Duration(seconds: 4),
-          receiveTimeout: const Duration(seconds: 5),
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 4),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Referer': 'https://www.tikwm.com/',
+            'Accept': 'application/json, text/plain, */*',
+          },
         ),
       );
 
@@ -658,19 +701,17 @@ class CloudExtractorService {
         final data = response.data;
         if (data is Map<String, dynamic> && data['code'] == 0 && data['data'] != null) {
           final videoData = data['data'] as Map<String, dynamic>;
-          String? directStreamUrl = videoData['play'] ?? videoData['wmplay'] ?? videoData['hdplay'];
+          String? directStreamUrl = videoData['play'] ?? videoData['hdplay'] ?? videoData['wmplay'];
 
           if (directStreamUrl != null && directStreamUrl.isNotEmpty) {
             if (directStreamUrl.startsWith('/')) {
               directStreamUrl = 'https://www.tikwm.com$directStreamUrl';
             }
 
-            var title = (videoData['title'] ?? 'TikTok_Video_${DateTime.now().millisecondsSinceEpoch}').toString();
+            var title = (videoData['title'] ?? 'TikTok_${DateTime.now().millisecondsSinceEpoch}').toString();
             title = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
             if (title.length > 60) title = title.substring(0, 60);
-            if (!title.toLowerCase().endsWith('.mp4')) {
-              title = '$title.mp4';
-            }
+            if (!title.toLowerCase().endsWith('.mp4')) title = '$title.mp4';
 
             final int sizeBytes = (videoData['size'] is int) ? videoData['size'] : 0;
             final String? cover = videoData['cover']?.toString();
@@ -691,17 +732,73 @@ class CloudExtractorService {
         }
       }
     } catch (e) {
-      debugPrint('[CloudExtractorService] TikWM error: $e');
+      debugPrint('[CloudExtractorService] TikWM notice: $e');
     }
+    return null;
+  }
 
+  Future<CloudExtractedMedia?> _queryTiklydown(String tikTokUrl) async {
     try {
-      // 2. LoveTik API Fallback
+      final response = await _dio.get(
+        'https://api.tiklydown.eu.org/api/download',
+        queryParameters: {'url': tikTokUrl},
+        options: Options(
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 4),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        if (data is Map<String, dynamic>) {
+          String? directStreamUrl;
+          if (data['video'] is Map && data['video']['noWatermark'] != null) {
+            directStreamUrl = data['video']['noWatermark'].toString();
+          } else if (data['video'] is Map && data['video']['watermark'] != null) {
+            directStreamUrl = data['video']['watermark'].toString();
+          }
+
+          if (directStreamUrl != null && directStreamUrl.startsWith('http')) {
+            var title = (data['title'] ?? 'TikTok_${DateTime.now().millisecondsSinceEpoch}').toString();
+            title = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+            if (title.length > 60) title = title.substring(0, 60);
+            if (!title.toLowerCase().endsWith('.mp4')) title = '$title.mp4';
+
+            debugPrint('[CloudExtractorService] ✅ TikTok Extracted via Tiklydown: $directStreamUrl');
+            return CloudExtractedMedia(
+              success: true,
+              originalUrl: tikTokUrl,
+              directStreamUrl: directStreamUrl,
+              title: title,
+              format: 'mp4',
+              quality: 'HD (No Watermark)',
+              isDirectFallback: false,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] Tiklydown notice: $e');
+    }
+    return null;
+  }
+
+  Future<CloudExtractedMedia?> _queryLoveTik(String tikTokUrl) async {
+    try {
       final response = await _dio.post(
         'https://lovetik.com/api/ajax/search',
         data: FormData.fromMap({'query': tikTokUrl}),
         options: Options(
-          sendTimeout: const Duration(seconds: 4),
-          receiveTimeout: const Duration(seconds: 5),
+          sendTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 4),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          },
         ),
       );
 
@@ -733,9 +830,8 @@ class CloudExtractorService {
         }
       }
     } catch (e) {
-      debugPrint('[CloudExtractorService] LoveTik error: $e');
+      debugPrint('[CloudExtractorService] LoveTik notice: $e');
     }
-
     return null;
   }
 

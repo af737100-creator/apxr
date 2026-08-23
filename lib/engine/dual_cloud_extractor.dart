@@ -59,17 +59,20 @@ class DualCloudExtractor {
   /// Default or custom primary Railway backend URL
   static String primaryRailwayUrl = 'https://hyperpulse-api-production.up.railway.app/extract';
 
-  /// Modern Cobalt v10 API instances
+  /// Modern Cobalt v10/v7 API instances pool
   static final List<String> cobaltInstances = [
     'https://api.cobalt.tools',
     'https://cobalt.api.redteam.tools',
     'https://cobalt-api.kwiatekm.tokyo',
     'https://co.wuk.sh',
+    'https://cobalt.stream',
+    'https://cobalt.hyonsu.com',
+    'https://cobalt.tools',
   ];
 
-  static const Duration quickTimeout = Duration(milliseconds: 3500);
+  static const Duration quickTimeout = Duration(milliseconds: 3800);
 
-  /// Main extraction method with multi-layer automatic failover
+  /// Main extraction method with multi-layer automatic failover & parallel racing
   static Future<DualExtractionResult> extract(String rawUrl) async {
     final cleanUrl = rawUrl.trim();
     if (cleanUrl.isEmpty) {
@@ -79,73 +82,76 @@ class DualCloudExtractor {
     debugPrint('[DualCloudExtractor] 🚀 Starting multi-engine extraction for: $cleanUrl');
 
     // -------------------------------------------------------------
-    // Engine 1: Modern Cobalt v10 Instances (Fastest & direct)
-    // -------------------------------------------------------------
-    for (final cobaltEndpoint in cobaltInstances) {
-      try {
-        final res = await _tryCobaltV10Instance(cleanUrl, cobaltEndpoint);
-        if (res != null && res.success && res.directUrl != null) {
-          debugPrint('[DualCloudExtractor] ✅ Cobalt v10 ($cobaltEndpoint) succeeded!');
-          return res;
-        }
-      } catch (e) {
-        debugPrint('[DualCloudExtractor] Cobalt ($cobaltEndpoint) notice: $e');
-      }
-    }
-
-    // -------------------------------------------------------------
-    // Engine 2: YT1s Global Network (Dedicated YouTube & Social)
+    // Parallel Race 1: Cobalt Instances Pool
     // -------------------------------------------------------------
     try {
-      final yt1sRes = await _tryYt1s(cleanUrl);
-      if (yt1sRes != null && yt1sRes.success && yt1sRes.directUrl != null) {
-        debugPrint('[DualCloudExtractor] ✅ YT1s Engine succeeded!');
-        return yt1sRes;
+      final cobaltFutures = cobaltInstances.map((endpoint) => _tryCobaltV10Instance(cleanUrl, endpoint));
+      final cobaltResult = await _raceFirstSuccessful(cobaltFutures, timeout: quickTimeout);
+      if (cobaltResult != null && cobaltResult.success && cobaltResult.directUrl != null) {
+        debugPrint('[DualCloudExtractor] ✅ Cobalt winner succeeded: ${cobaltResult.directUrl}');
+        return cobaltResult;
       }
     } catch (e) {
-      debugPrint('[DualCloudExtractor] YT1s notice: $e');
+      debugPrint('[DualCloudExtractor] Cobalt pool race notice: $e');
     }
 
     // -------------------------------------------------------------
-    // Engine 3: Y2Mate Direct API
+    // Parallel Race 2: YT1s & Y2Mate & Loader.to & Railway
     // -------------------------------------------------------------
     try {
-      final y2mateRes = await _tryY2Mate(cleanUrl);
-      if (y2mateRes != null && y2mateRes.success && y2mateRes.directUrl != null) {
-        debugPrint('[DualCloudExtractor] ✅ Y2Mate Engine succeeded!');
-        return y2mateRes;
+      final secondaryFutures = [
+        _tryYt1s(cleanUrl),
+        _tryY2Mate(cleanUrl),
+        _tryLoaderTo(cleanUrl),
+        _tryPrimaryRailway(cleanUrl),
+      ];
+      final secResult = await _raceFirstSuccessful(secondaryFutures, timeout: const Duration(seconds: 4));
+      if (secResult != null && secResult.success && secResult.directUrl != null) {
+        return secResult;
       }
     } catch (e) {
-      debugPrint('[DualCloudExtractor] Y2Mate notice: $e');
+      debugPrint('[DualCloudExtractor] Secondary pool race notice: $e');
     }
-
-    // -------------------------------------------------------------
-    // Engine 4: Loader.to API
-    // -------------------------------------------------------------
-    try {
-      final loaderRes = await _tryLoaderTo(cleanUrl);
-      if (loaderRes != null && loaderRes.success && loaderRes.directUrl != null) {
-        debugPrint('[DualCloudExtractor] ✅ Loader.to Engine succeeded!');
-        return loaderRes;
-      }
-    } catch (e) {
-      debugPrint('[DualCloudExtractor] Loader.to notice: $e');
-    }
-
-    // -------------------------------------------------------------
-    // Engine 5: Primary Railway Backend (if deployed)
-    // -------------------------------------------------------------
-    try {
-      final primaryResult = await _tryPrimaryRailway(cleanUrl);
-      if (primaryResult != null && primaryResult.success && primaryResult.directUrl != null) {
-        return primaryResult;
-      }
-    } catch (_) {}
 
     debugPrint('[DualCloudExtractor] ❌ All extraction servers failed for: $cleanUrl');
     return DualExtractionResult.failed(
       errorMessage: 'تعذر استخراج الرابط المباشر من السيرفرات السحابية. يرجى استخدام المتصفح المدمج 🌐 لتشغيله وتحميله.',
     );
+  }
+
+  /// Races multiple futures and returns the FIRST ONE that resolves to a non-null successful result
+  static Future<DualExtractionResult?> _raceFirstSuccessful(
+    Iterable<Future<DualExtractionResult?>> futuresList, {
+    required Duration timeout,
+  }) async {
+    final completer = Completer<DualExtractionResult?>();
+    final list = futuresList.toList();
+    int remaining = list.length;
+
+    if (remaining == 0) return null;
+
+    for (final fut in list) {
+      fut.then((res) {
+        if (res != null && res.success && res.directUrl != null && res.directUrl!.isNotEmpty) {
+          if (!completer.isCompleted) {
+            completer.complete(res);
+          }
+        }
+      }).catchError((_) {
+        // Ignore single failure in race
+      }).whenComplete(() {
+        remaining--;
+        if (remaining == 0 && !completer.isCompleted) {
+          completer.complete(null);
+        }
+      });
+    }
+
+    try {
+      return await completer.future.timeout(timeout);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Modern Cobalt v10 Endpoint Handler

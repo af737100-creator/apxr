@@ -461,6 +461,25 @@ class TurboDownloadService {
 
     int bytesDownloadedSinceLastTick = 0;
     DateTime lastSpeedTick = DateTime.now();
+
+    final uri = Uri.tryParse(task.sourceUrl);
+    String referer = 'https://www.google.com/';
+    if (uri != null && uri.host.isNotEmpty) {
+      if (uri.host.contains('tikwm.com')) {
+        referer = 'https://www.tikwm.com/';
+      } else if (uri.host.contains('tiktok.com')) {
+        referer = 'https://www.tiktok.com/';
+      } else if (uri.host.contains('instagram.com')) {
+        referer = 'https://www.instagram.com/';
+      } else if (uri.host.contains('twitter.com') || uri.host.contains('twimg.com') || uri.host.contains('x.com')) {
+        referer = 'https://x.com/';
+      } else if (uri.host.contains('youtube.com') || uri.host.contains('googlevideo.com')) {
+        referer = 'https://www.youtube.com/';
+      } else {
+        referer = '${uri.scheme}://${uri.host}/';
+      }
+    }
+
     final Response<ResponseBody> response = await _dio.get<ResponseBody>(
       task.sourceUrl,
       options: Options(
@@ -468,6 +487,10 @@ class TurboDownloadService {
         followRedirects: true,
         maxRedirects: 10,
         headers: {
+          'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Referer': referer,
+          'Accept': '*/*',
           'Accept-Encoding': 'identity',
           'Connection': 'keep-alive',
         },

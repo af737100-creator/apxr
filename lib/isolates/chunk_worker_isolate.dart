@@ -43,13 +43,16 @@ class ChunkWorkerPacket {
 void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
   final Dio dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 30),
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 45),
       responseType: ResponseType.stream,
       headers: {
         'Range': 'bytes=${params.startByte}-${params.endByte}',
-        'User-Agent': 'HyperPulse-Turbo-Engine/1.0.0 (Flutter; High-Speed Core)',
+        'User-Agent':
+            'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Mobile Safari/537.36',
+        'Accept': '*/*',
         'Accept-Encoding': 'identity', // Prevent gzip re-compression on range requests
+        'Connection': 'keep-alive',
         ...?params.customHeaders,
       },
     ),
