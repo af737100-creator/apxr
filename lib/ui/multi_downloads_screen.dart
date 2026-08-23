@@ -55,6 +55,7 @@ class _MultiDownloadsScreenState extends State<MultiDownloadsScreen>
       vsync: this,
       initialIndex: widget.initialTabIndex,
     );
+    _manager.init();
     _manager.addListener(_onManagerUpdate);
     _manager.refreshCompletedDownloadsFromStorage();
   }
@@ -575,16 +576,19 @@ class _MultiDownloadsScreenState extends State<MultiDownloadsScreen>
 
           const SizedBox(height: 10),
 
-          // Linear Progress Indicator
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(
-              value: task.totalSizeBytes > 0 ? task.progress : null,
-              minHeight: 5,
-              backgroundColor: const Color(0xFF221F24),
-              valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+          // Segmented Parallel Progress Indicator (16 chunks) or Continuous Bar
+          if (task.threadCount > 1 && task.totalSizeBytes > 0)
+            _buildMultiSegmentBar(task, statusColor)
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: task.totalSizeBytes > 0 ? task.progress : null,
+                minHeight: 6,
+                backgroundColor: const Color(0xFF221F24),
+                valueColor: AlwaysStoppedAnimation<Color>(statusColor),
+              ),
             ),
-          ),
 
           const SizedBox(height: 8),
 
@@ -827,5 +831,57 @@ class _MultiDownloadsScreenState extends State<MultiDownloadsScreen>
     }
     final totMb = (task.totalSizeBytes / (1024 * 1024)).toStringAsFixed(1);
     return '$dlMb MB / $totMb MB';
+  }
+
+  Widget _buildMultiSegmentBar(DownloadTask task, Color statusColor) {
+    final int count = task.segments.isNotEmpty
+        ? task.segments.length
+        : (task.threadCount > 0 ? task.threadCount : 16);
+
+    return Container(
+      height: 6,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1A22),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Row(
+        children: List.generate(count, (index) {
+          double chunkRatio = 0.0;
+          bool isComplete = false;
+
+          if (task.segments.isNotEmpty && index < task.segments.length) {
+            chunkRatio = task.segments[index].progress;
+            isComplete = task.segments[index].isComplete;
+          } else {
+            final span = 1.0 / count;
+            final start = index * span;
+            if (task.progress >= (index + 1) * span) {
+              chunkRatio = 1.0;
+              isComplete = true;
+            } else if (task.progress > start) {
+              chunkRatio = ((task.progress - start) / span).clamp(0.0, 1.0);
+            }
+          }
+
+          return Expanded(
+            child: Container(
+              margin: EdgeInsets.only(right: index < count - 1 ? 1.0 : 0.0),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2530),
+                borderRadius: BorderRadius.circular(2),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: chunkRatio.clamp(0.0, 1.0),
+                child: Container(
+                  color: isComplete ? const Color(0xFF10B981) : statusColor,
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
   }
 }

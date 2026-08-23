@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import '../models/download_task.dart';
+import '../models/segment_chunk.dart';
 import '../models/device_metrics.dart';
 import '../engine/turbo_download_service.dart';
 import '../engine/cloud_extractor_service.dart';
@@ -10,11 +12,13 @@ import '../engine/storage_path_resolver.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/android_system_bridge.dart';
 import '../engine/audio_extractor_service.dart';
+import '../engine/smart_resume_manager.dart';
 
 /// [DownloadManagerService] is the central task manager orchestrating:
 /// 1. Active Downloads Queue with Pause, Resume, Cancel.
 /// 2. Finished Downloads Library with Instant APK Install, Video/Audio Play, and Open in File Manager.
 /// 3. In-App Browser Download Catching & Auto-naming with correct extensions (.apk, .mp4, etc.)
+/// 4. Resilient Persistence across complete app exits and phone reboots.
 class DownloadManagerService extends ChangeNotifier {
   static final DownloadManagerService _instance = DownloadManagerService._internal();
   factory DownloadManagerService() => _instance;
@@ -26,9 +30,12 @@ class DownloadManagerService extends ChangeNotifier {
   final CloudExtractorService _cloudExtractor = CloudExtractorService();
 
   final Map<String, StreamSubscription<TurboProgressEvent>> _subscriptions = {};
+  bool _isInitialized = false;
 
   List<DownloadTask> get activeTasks => List.unmodifiable(_activeTasks);
   List<DownloadTask> get completedTasks => List.unmodifiable(_completedTasks);
+
+  DownloadTask? get latestActiveTask => _activeTasks.isNotEmpty ? _activeTasks.first : null;
 
   int get activeCount =>
       _activeTasks.where((t) => t.status == DownloadStatus.downloading || t.status == DownloadStatus.analyzing || t.status == DownloadStatus.preparingSegments).length;
@@ -51,6 +58,135 @@ class DownloadManagerService extends ChangeNotifier {
       return '${(speed / 1024).toStringAsFixed(1)} KB/s';
     } else {
       return '${(speed / (1024 * 1024)).toStringAsFixed(2)} MB/s';
+    }
+  }
+
+  /// Initializes the service, restoring any active/paused tasks from disk
+  Future<void> init() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+    await _loadPersistedTasks();
+    await refreshCompletedDownloadsFromStorage();
+  }
+
+  /// Path to task registry file
+  Future<String> _getRegistryFilePath() async {
+    final baseDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: false);
+    return '$baseDir/.hyperpulse_tasks_registry.json';
+  }
+
+  /// Saves active and paused tasks to disk
+  Future<void> _persistTasksState() async {
+    try {
+      final registryPath = await _getRegistryFilePath();
+      final file = File(registryPath);
+      final list = _activeTasks.map((t) => t.toJson()).toList();
+      await file.writeAsString(jsonEncode(list), flush: true);
+    } catch (e) {
+      debugPrint('[DownloadManagerService] Error saving tasks registry: $e');
+    }
+  }
+
+  /// Restores active and paused tasks from disk after app restart
+  Future<void> _loadPersistedTasks() async {
+    try {
+      final registryPath = await _getRegistryFilePath();
+      final file = File(registryPath);
+      if (await file.exists()) {
+        final content = await file.readAsString();
+        if (content.isNotEmpty) {
+          final List<dynamic> decoded = jsonDecode(content);
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) {
+              final task = DownloadTask.fromJson(item);
+              // If it was downloading when app closed, set to paused so user can resume seamlessly
+              if (task.status == DownloadStatus.downloading || task.status == DownloadStatus.analyzing) {
+                task.status = DownloadStatus.paused;
+                task.speedBytesPerSecond = 0;
+              }
+
+              // Try to reload segment state if available
+              final state = await SmartResumeManager.loadCheckpoints(task.fullFilePath);
+              if (state != null && state['segments'] is List) {
+                task.segments.clear();
+                for (final segJson in state['segments']) {
+                  if (segJson is Map<String, dynamic>) {
+                    task.segments.add(SegmentChunk.fromJson(segJson));
+                  }
+                }
+                final sumDownloaded = task.segments.fold<int>(0, (prev, s) => prev + s.downloadedBytes);
+                if (sumDownloaded > 0) {
+                  task.downloadedBytes = sumDownloaded;
+                }
+              }
+
+              if (!_activeTasks.any((t) => t.id == task.id)) {
+                _activeTasks.add(task);
+              }
+            }
+          }
+        }
+      }
+
+      // Also scan directory for any orphan .pulse_state files
+      await _recoverOrphanStateFiles();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[DownloadManagerService] Error loading persisted tasks: $e');
+    }
+  }
+
+  /// Recovers any .pulse_state files in download folders
+  Future<void> _recoverOrphanStateFiles() async {
+    try {
+      final downloadsDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: false);
+      final moviesDir = await StoragePathResolver.resolveMoviesDirectory();
+
+      final searchDirs = [Directory(downloadsDir), Directory(moviesDir)];
+      for (final dir in searchDirs) {
+        if (!await dir.exists()) continue;
+        final entries = dir.listSync().whereType<File>();
+        for (final entry in entries) {
+          if (entry.path.endsWith('.pulse_state')) {
+            final targetFilePath = entry.path.replaceAll('.pulse_state', '');
+            final fileName = p.basename(targetFilePath);
+            final bool alreadyTracked = _activeTasks.any((t) => t.fileName == fileName) ||
+                _completedTasks.any((t) => t.fileName == fileName);
+
+            if (!alreadyTracked) {
+              final stateData = await SmartResumeManager.loadCheckpoints(targetFilePath);
+              if (stateData != null) {
+                final sourceUrl = stateData['sourceUrl']?.toString() ?? '';
+                final totalSize = stateData['totalSizeBytes'] as int? ?? 0;
+                final segs = <SegmentChunk>[];
+                if (stateData['segments'] is List) {
+                  for (final s in stateData['segments']) {
+                    if (s is Map<String, dynamic>) {
+                      segs.add(SegmentChunk.fromJson(s));
+                    }
+                  }
+                }
+                final sumDownloaded = segs.fold<int>(0, (prev, s) => prev + s.downloadedBytes);
+
+                final recoveredTask = DownloadTask(
+                  id: 'recovered_${DateTime.now().millisecondsSinceEpoch}_${fileName.hashCode}',
+                  sourceUrl: sourceUrl,
+                  fileName: fileName,
+                  destinationDirectory: entry.parent.path,
+                  totalSizeBytes: totalSize,
+                  downloadedBytes: sumDownloaded,
+                  status: DownloadStatus.paused,
+                  segments: segs,
+                  threadCount: segs.isNotEmpty ? segs.length : 16,
+                );
+                _activeTasks.add(recoveredTask);
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[DownloadManagerService] Error recovering orphan state files: $e');
     }
   }
 
@@ -231,6 +367,7 @@ class DownloadManagerService extends ChangeNotifier {
     );
 
     _activeTasks.insert(0, task);
+    _persistTasksState();
     notifyListeners();
 
     _startTaskExecution(task, extractMp3: extractMp3, isSocial: isSocial);
@@ -244,6 +381,7 @@ class DownloadManagerService extends ChangeNotifier {
   }) async {
     try {
       task.status = DownloadStatus.downloading;
+      _persistTasksState();
       notifyListeners();
 
       // Ensure foreground service is running so OS doesn't kill downloads on app switch/exit
@@ -254,6 +392,10 @@ class DownloadManagerService extends ChangeNotifier {
           task.downloadedBytes = event.downloadedBytes;
           task.totalSizeBytes = event.totalBytes;
           task.speedBytesPerSecond = event.speedBytesPerSec;
+          if (event.segments.isNotEmpty) {
+            task.segments.clear();
+            task.segments.addAll(event.segments);
+          }
           notifyListeners();
         }
       });
@@ -279,6 +421,7 @@ class DownloadManagerService extends ChangeNotifier {
       task.finishedAt = DateTime.now();
       _activeTasks.removeWhere((t) => t.id == task.id);
       _completedTasks.insert(0, task);
+      _persistTasksState();
 
       _subscriptions[task.id]?.cancel();
       _subscriptions.remove(task.id);
@@ -310,6 +453,7 @@ class DownloadManagerService extends ChangeNotifier {
       task.error = e.toString();
       _subscriptions[task.id]?.cancel();
       _subscriptions.remove(task.id);
+      _persistTasksState();
 
       if (activeCount == 0) {
         await AndroidSystemBridge.stopForegroundService();
@@ -328,6 +472,7 @@ class DownloadManagerService extends ChangeNotifier {
       task.speedBytesPerSecond = 0;
       _subscriptions[taskId]?.cancel();
       _subscriptions.remove(taskId);
+      _persistTasksState();
       notifyListeners();
     }
   }
@@ -338,6 +483,7 @@ class DownloadManagerService extends ChangeNotifier {
     if (taskIndex != -1) {
       final task = _activeTasks[taskIndex];
       task.status = DownloadStatus.downloading;
+      _persistTasksState();
       notifyListeners();
       _startTaskExecution(task);
     }
@@ -352,6 +498,7 @@ class DownloadManagerService extends ChangeNotifier {
       _subscriptions[taskId]?.cancel();
       _subscriptions.remove(taskId);
       _activeTasks.removeAt(taskIndex);
+      _persistTasksState();
 
       // Attempt to clean partial file
       try {

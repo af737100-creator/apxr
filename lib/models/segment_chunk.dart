@@ -79,6 +79,20 @@ class SegmentChunk {
     'retryAttempts': retryAttempts,
   };
 
+  factory SegmentChunk.fromJson(Map<String, dynamic> json) {
+    return SegmentChunk(
+      index: json['index'] as int? ?? 0,
+      startByte: json['startByte'] as int? ?? 0,
+      endByte: json['endByte'] as int? ?? 0,
+      downloadedBytes: json['downloadedBytes'] as int? ?? 0,
+      status: ChunkStatus.values.firstWhere(
+        (e) => e.name == (json['status'] ?? 'pending'),
+        orElse: () => ChunkStatus.pending,
+      ),
+      retryAttempts: json['retryAttempts'] as int? ?? 0,
+    );
+  }
+
   @override
   String toString() {
     return 'SegmentChunk#$index [Range: $startByte-$endByte, Size: ${totalExpectedBytes ~/ 1024}KB, Progress: ${(progress * 100).toStringAsFixed(1)}%, Status: ${status.name}]';

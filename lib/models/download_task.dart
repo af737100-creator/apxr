@@ -86,4 +86,50 @@ class DownloadTask {
       return '${(totalSizeBytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
     }
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'sourceUrl': sourceUrl,
+    'fileName': fileName,
+    'destinationDirectory': destinationDirectory,
+    'totalSizeBytes': totalSizeBytes,
+    'downloadedBytes': downloadedBytes,
+    'status': status.name,
+    'speedBytesPerSecond': speedBytesPerSecond,
+    'threadCount': threadCount,
+    'segments': segments.map((s) => s.toJson()).toList(),
+    'error': error,
+    'createdAt': createdAt.toIso8601String(),
+    'finishedAt': finishedAt?.toIso8601String(),
+  };
+
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    final segs = <SegmentChunk>[];
+    if (json['segments'] is List) {
+      for (final s in json['segments']) {
+        if (s is Map<String, dynamic>) {
+          segs.add(SegmentChunk.fromJson(s));
+        }
+      }
+    }
+
+    return DownloadTask(
+      id: json['id'] as String? ?? 'task_${DateTime.now().millisecondsSinceEpoch}',
+      sourceUrl: json['sourceUrl'] as String? ?? '',
+      fileName: json['fileName'] as String? ?? 'download_file',
+      destinationDirectory: json['destinationDirectory'] as String? ?? '',
+      totalSizeBytes: json['totalSizeBytes'] as int? ?? 0,
+      downloadedBytes: json['downloadedBytes'] as int? ?? 0,
+      status: DownloadStatus.values.firstWhere(
+        (e) => e.name == (json['status'] ?? 'idle'),
+        orElse: () => DownloadStatus.idle,
+      ),
+      speedBytesPerSecond: (json['speedBytesPerSecond'] as num?)?.toDouble() ?? 0.0,
+      threadCount: json['threadCount'] as int? ?? 4,
+      segments: segs,
+      error: json['error'] as String?,
+      createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt']) : null,
+      finishedAt: json['finishedAt'] != null ? DateTime.tryParse(json['finishedAt']) : null,
+    );
+  }
 }

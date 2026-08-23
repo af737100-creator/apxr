@@ -282,32 +282,54 @@ class CloudExtractorService {
   }
 
   /// Specialized Multi-Layer YouTube Turbo Extractor
-  /// Runs concurrent parallel races across Invidious pool, Piped network, SaveTube CDN, Cobalt & YoutubeExplode.
+  /// Runs concurrent parallel races across DualCloudExtractor (Cobalt v10 + YT1s + Y2Mate), Invidious pool, SaveTube CDN & YoutubeExplode.
   Future<CloudExtractedMedia?> _extractYouTubeDirect(String ytUrl) async {
     final videoId = extractYouTubeVideoId(ytUrl);
+    debugPrint('[CloudExtractorService] 🎯 Launching Concurrent YouTube Turbo Engine for: $ytUrl (ID: $videoId)');
+
+    // 1. DualCloudExtractor (Cobalt v10 + YT1s + Y2Mate + Loader.to)
+    try {
+      final dualRes = await DualCloudExtractor.extract(ytUrl);
+      if (dualRes.success && dualRes.directUrl != null) {
+        var title = (dualRes.title ?? 'YouTube_Video_$videoId').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        if (!title.toLowerCase().endsWith('.mp4')) title = '$title.mp4';
+
+        return CloudExtractedMedia(
+          success: true,
+          originalUrl: ytUrl,
+          directStreamUrl: dualRes.directUrl!,
+          title: title,
+          format: 'mp4',
+          quality: dualRes.providerUsed ?? 'YouTube Turbo CDN ⚡',
+          thumbnailUrl: videoId != null ? 'https://img.youtube.com/vi/$videoId/hqdefault.jpg' : null,
+          isDirectFallback: false,
+        );
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] DualCloudExtractor YouTube notice: $e');
+    }
+
     if (videoId == null || videoId.isEmpty) return null;
 
-    debugPrint('[CloudExtractorService] 🎯 Launching Concurrent YouTube Turbo Engine for ID: $videoId');
-
-    // 1. Race Invidious Global Public Instances Pool (First successful response wins)
-    final invidiousResult = await _raceInvidious(videoId, ytUrl);
-    if (invidiousResult != null && invidiousResult.success) {
-      return invidiousResult;
-    }
-
-    // 2. Race Piped API Network
-    final pipedResult = await _racePiped(videoId, ytUrl);
-    if (pipedResult != null && pipedResult.success) {
-      return pipedResult;
-    }
-
-    // 3. Race SaveTube & Rapid CDN APIs
+    // 2. SaveTube & Rapid CDN APIs
     final saveTubeResult = await _querySaveTube(videoId, ytUrl);
     if (saveTubeResult != null && saveTubeResult.success) {
       return saveTubeResult;
     }
 
-    // 4. Try Native YoutubeExplode Engine
+    // 3. Race Invidious Global Public Instances Pool (First successful response wins)
+    final invidiousResult = await _raceInvidious(videoId, ytUrl);
+    if (invidiousResult != null && invidiousResult.success) {
+      return invidiousResult;
+    }
+
+    // 4. Race Piped API Network
+    final pipedResult = await _racePiped(videoId, ytUrl);
+    if (pipedResult != null && pipedResult.success) {
+      return pipedResult;
+    }
+
+    // 5. Try Native YoutubeExplode Engine
     final explodeResult = await _queryYoutubeExplode(videoId, ytUrl);
     if (explodeResult != null && explodeResult.success) {
       return explodeResult;

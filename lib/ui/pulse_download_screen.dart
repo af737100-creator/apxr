@@ -69,6 +69,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
   // State Telemetry
   bool _isDownloading = false;
+  bool _isPaused = false;
   double _progress = 0.0;
   double _currentSpeedBps = 0.0;
   int _downloadedBytes = 0;
@@ -80,6 +81,9 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   String _resolvedStorageDir = '';
   bool _extractMp3 = false;
   bool _isVideo = false;
+  List<SegmentChunk> _segments = [];
+  bool _showSegmentsDetails = false;
+  DownloadTask? _currentTask;
 
   // Speed Waveform Telemetry History (Last 15 sample points for smooth graph)
   final List<double> _speedHistory = List.filled(16, 0.0);
@@ -105,6 +109,14 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     _linkAnalyzer = widget.customLinkAnalyzer ?? LinkAnalyzer();
     _cloudExtractor = CloudExtractorService();
     _smartCatcher = SmartDownloadCatcher();
+
+    // Initialize Manager & Restore persisted tasks if any
+    DownloadManagerService().init().then((_) {
+      if (mounted) {
+        _restoreLatestTaskFromStorage();
+      }
+    });
+    DownloadManagerService().addListener(_onManagerUpdate);
 
     // Start Clipboard Listener
     _smartCatcher.startListening();
@@ -137,7 +149,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         _currentSpeedBps = event.speedBytesPerSec;
         _downloadedBytes = event.downloadedBytes;
         _totalBytes = event.totalBytes;
-        _activeThreads = event.isSingleStream ? 1 : (event.segments.isNotEmpty ? event.segments.length : _activeThreads);
+        if (event.segments.isNotEmpty) {
+          _segments = List.from(event.segments);
+          _activeThreads = event.segments.length;
+        } else {
+          _activeThreads = event.isSingleStream ? 1 : _activeThreads;
+        }
         if (event.statusText.isNotEmpty) {
           _statusMessage = event.statusText;
         }
@@ -147,6 +164,66 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         }
       });
     });
+  }
+
+  void _onManagerUpdate() {
+    if (!mounted) return;
+    final manager = DownloadManagerService();
+    if (_currentTask != null) {
+      final updated = manager.activeTasks.where((t) => t.id == _currentTask!.id).firstOrNull;
+      if (updated != null) {
+        setState(() {
+          _currentTask = updated;
+          if (updated.status == DownloadStatus.downloading) {
+            _isDownloading = true;
+            _isPaused = false;
+          } else if (updated.status == DownloadStatus.paused) {
+            _isDownloading = false;
+            _isPaused = true;
+          }
+        });
+      }
+    }
+  }
+
+  void _restoreLatestTaskFromStorage() {
+    final manager = DownloadManagerService();
+    if (manager.activeTasks.isNotEmpty) {
+      final task = manager.activeTasks.first;
+      setState(() {
+        _currentTask = task;
+        _currentFileName = task.fileName;
+        if (task.sourceUrl.isNotEmpty) {
+          _urlInputController.text = task.sourceUrl;
+        }
+        _downloadedBytes = task.downloadedBytes;
+        _totalBytes = task.totalSizeBytes;
+        _progress = task.progress;
+        _segments = List.from(task.segments);
+        _activeThreads = task.threadCount > 0 ? task.threadCount : 16;
+        _targetFilePath = task.fullFilePath;
+        _isDownloading = task.status == DownloadStatus.downloading;
+        _isPaused = task.status == DownloadStatus.paused;
+        _statusMessage = task.status == DownloadStatus.downloading
+            ? 'جاري التنزيل المتوازي عبر $_activeThreads مسار ⚡'
+            : (task.status == DownloadStatus.paused
+                ? 'تم استعادة التحميل السابق // اضغط استئناف للبدء ⚡'
+                : 'في وضع الاستعداد // أدخل أو الصق رابط التحميل');
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    DownloadManagerService().removeListener(_onManagerUpdate);
+    WidgetsBinding.instance.removeObserver(this);
+    _pulseGlowController.dispose();
+    _urlInputController.dispose();
+    _speedSampleTimer?.cancel();
+    _progressSub?.cancel();
+    _catcherSub?.cancel();
+    _smartCatcher.stopListening();
+    super.dispose();
   }
 
   @override
@@ -930,47 +1007,69 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
                   const SizedBox(height: 12),
 
-                  // 3. Wide Horizontal Glowing Progress Bar
-                  Stack(
-                    children: [
-                      // Track
-                      Container(
-                        height: 14,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0C0B0E),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFF28252E)),
-                        ),
-                      ),
-                      // Active Progress Fill
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final barWidth = constraints.maxWidth * _progress.clamp(0.0, 1.0);
-                          return Container(
-                            width: math.max(barWidth, _isDownloading ? 8.0 : 0.0),
-                            height: 14,
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [fieryAmber, fieryYellow],
-                                begin: Alignment.centerLeft,
-                                end: Alignment.centerRight,
+                  // 3. Segmented Multi-Thread Parallel Progress Bar (16 Segments)
+                  _buildSegmentedProgressBar(),
+
+                  const SizedBox(height: 8),
+
+                  // Segment info & toggle button
+                  if (_activeThreads > 1 && !_isVideo)
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.hub_outlined, size: 12, color: fieryAmber),
+                            const SizedBox(width: 4),
+                            Text(
+                              'تقسيم متوازي: $_activeThreads مسارات متزامنة ⚡',
+                              style: const TextStyle(
+                                color: Color(0xFFC7BFC2),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
                               ),
-                              borderRadius: BorderRadius.circular(10),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: fieryAmber.withOpacity(0.6),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _showSegmentsDetails = !_showSegmentsDetails;
+                            });
+                            HapticFeedback.selectionClick();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1B22),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: fieryAmber.withOpacity(0.35)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _showSegmentsDetails ? 'إخفاء الخيوط ▲' : 'عرض الخيوط ($_activeThreads) ▼',
+                                  style: const TextStyle(
+                                    color: fieryAmber,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ],
                             ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
+                          ),
+                        ),
+                      ],
+                    ),
 
-                  const SizedBox(height: 12),
+                  // Parallel Segments Live Inspector Grid (If expanded)
+                  if (_showSegmentsDetails && _activeThreads > 1 && !_isVideo) ...[
+                    const SizedBox(height: 8),
+                    _buildParallelSegmentsGrid(),
+                  ],
+
+                  const SizedBox(height: 10),
 
                   // 4. Download Details Telemetry Row (Size, Remaining, ETA)
                   Container(
@@ -997,7 +1096,9 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                         Container(width: 1, height: 20, color: const Color(0xFF2B2733)),
                         _buildCardSubMetric(
                           label: 'الحالة',
-                          value: _isDownloading ? 'نشط ⚡' : 'متوقف',
+                          value: _isDownloading
+                              ? 'نشط ⚡'
+                              : (_isPaused ? 'متوقف مؤقتاً ⏸️' : 'جاهز'),
                           icon: Icons.bolt,
                         ),
                       ],
@@ -1010,6 +1111,270 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         ),
       ),
     );
+  }
+
+  Widget _buildSegmentedProgressBar() {
+    final int threadCount = _segments.isNotEmpty ? _segments.length : (_activeThreads > 1 ? _activeThreads : 16);
+
+    // If single stream (e.g. social media or direct 1 thread)
+    if (_activeThreads <= 1 || _isVideo) {
+      return Stack(
+        children: [
+          Container(
+            height: 14,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C0B0E),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: const Color(0xFF28252E)),
+            ),
+          ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final barWidth = constraints.maxWidth * _progress.clamp(0.0, 1.0);
+              return Container(
+                width: math.max(barWidth, _isDownloading ? 8.0 : 0.0),
+                height: 14,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [fieryAmber, fieryYellow],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: fieryAmber.withOpacity(0.6),
+                      blurRadius: 10,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    }
+
+    // Multi-segment parallel segmented bar
+    return Container(
+      height: 16,
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A090D),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF28252E), width: 1.0),
+      ),
+      child: Row(
+        children: List.generate(threadCount, (index) {
+          double chunkProgress = 0.0;
+          bool isChunkComplete = false;
+          bool isChunkActive = false;
+
+          if (_segments.isNotEmpty && index < _segments.length) {
+            chunkProgress = _segments[index].progress;
+            isChunkComplete = _segments[index].isComplete;
+            isChunkActive = _segments[index].status == ChunkStatus.downloading;
+          } else {
+            final segmentSpan = 1.0 / threadCount;
+            final segmentStart = index * segmentSpan;
+            if (_progress >= (index + 1) * segmentSpan) {
+              chunkProgress = 1.0;
+              isChunkComplete = true;
+            } else if (_progress > segmentStart) {
+              chunkProgress = ((_progress - segmentStart) / segmentSpan).clamp(0.0, 1.0);
+              isChunkActive = _isDownloading;
+            }
+          }
+
+          return Expanded(
+            child: Container(
+              margin: EdgeInsets.only(right: index < threadCount - 1 ? 2.0 : 0.0),
+              decoration: BoxDecoration(
+                color: const Color(0xFF141218),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: Stack(
+                children: [
+                  FractionallySizedBox(
+                    alignment: Alignment.centerLeft,
+                    widthFactor: chunkProgress.clamp(0.0, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: isChunkComplete
+                              ? [const Color(0xFF10B981), const Color(0xFF34D399)]
+                              : [fieryAmber, fieryYellow],
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                        ),
+                        boxShadow: [
+                          if (isChunkActive && _isDownloading)
+                            BoxShadow(
+                              color: fieryAmber.withOpacity(0.8),
+                              blurRadius: 4,
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _buildParallelSegmentsGrid() {
+    final int count = _segments.isNotEmpty ? _segments.length : _activeThreads;
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 180),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0E0D12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF24202B)),
+      ),
+      child: GridView.builder(
+        shrinkWrap: true,
+        itemCount: count,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          mainAxisSpacing: 6,
+          crossAxisSpacing: 6,
+          childAspectRatio: 3.2,
+        ),
+        itemBuilder: (context, idx) {
+          double progress = 0.0;
+          String rangeText = '';
+          bool isComplete = false;
+
+          if (_segments.isNotEmpty && idx < _segments.length) {
+            final s = _segments[idx];
+            progress = s.progress;
+            isComplete = s.isComplete;
+            final startMb = (s.startByte / (1024 * 1024)).toStringAsFixed(1);
+            final endMb = (s.endByte / (1024 * 1024)).toStringAsFixed(1);
+            rangeText = '$startMb-$endMb MB';
+          } else {
+            final segmentSpan = 1.0 / count;
+            final segmentStart = idx * segmentSpan;
+            if (_progress >= (idx + 1) * segmentSpan) {
+              progress = 1.0;
+              isComplete = true;
+            } else if (_progress > segmentStart) {
+              progress = ((_progress - segmentStart) / segmentSpan).clamp(0.0, 1.0);
+            }
+            rangeText = 'مسار #${idx + 1}';
+          }
+
+          final pct = (progress * 100).toInt().clamp(0, 100);
+
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFF16141C),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: isComplete
+                    ? const Color(0xFF10B981).withOpacity(0.4)
+                    : (_isDownloading && progress > 0 ? fieryAmber.withOpacity(0.4) : const Color(0xFF26222C)),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'خيط #${idx + 1}',
+                      style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      isComplete ? 'مكتمل ✅' : '$pct%',
+                      style: TextStyle(
+                        color: isComplete ? const Color(0xFF10B981) : fieryAmber,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 3,
+                    backgroundColor: const Color(0xFF221F28),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      isComplete ? const Color(0xFF10B981) : fieryAmber,
+                    ),
+                  ),
+                ),
+                if (rangeText.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    rangeText,
+                    style: const TextStyle(color: Color(0xFF7A7478), fontSize: 8),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _pauseDownload() {
+    if (_currentTask != null) {
+      DownloadManagerService().pauseTask(_currentTask!.id);
+    }
+    setState(() {
+      _isDownloading = false;
+      _isPaused = true;
+      _statusMessage = 'تم الإيقاف مؤقتاً // تم حفظ تقدم الأجزاء على القرص 💾';
+    });
+    HapticFeedback.lightImpact();
+  }
+
+  void _resumeDownload() {
+    if (_currentTask != null) {
+      DownloadManagerService().resumeTask(_currentTask!.id);
+      setState(() {
+        _isDownloading = true;
+        _isPaused = false;
+        _statusMessage = 'جاري استئناف التنزيل المتوازي من آخر نقطة... ⚡';
+      });
+      HapticFeedback.mediumImpact();
+    } else {
+      _initiateTurboDownload();
+    }
+  }
+
+  void _cancelDownload() {
+    if (_currentTask != null) {
+      DownloadManagerService().cancelTask(_currentTask!.id);
+    }
+    setState(() {
+      _isDownloading = false;
+      _isPaused = false;
+      _progress = 0.0;
+      _downloadedBytes = 0;
+      _currentTask = null;
+      _segments = [];
+      _statusMessage = 'تم إلغاء التنزيل';
+    });
+    HapticFeedback.heavyImpact();
   }
 
   Widget _buildCardSubMetric({
@@ -1243,67 +1608,177 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
           const SizedBox(height: 12),
 
-          // Row 4: Big Glowing Rectangular "ابدأ التحميل" Action Button
-          GestureDetector(
-            onTap: _isDownloading ? null : () => _initiateTurboDownload(),
-            child: Container(
-              height: 48,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: _isDownloading
-                      ? [const Color(0xFF2A2220), const Color(0xFF1A1616)]
-                      : [fieryAmber, const Color(0xFFE03C00)],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
+          // Row 4: Action Control Buttons (Start / Pause / Resume / Cancel)
+          if (_isDownloading)
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: GestureDetector(
+                    onTap: _pauseDownload,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFEAB308), Color(0xFFCA8A04)],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFEAB308).withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.pause, color: Colors.black, size: 20),
+                          SizedBox(width: 6),
+                          Text(
+                            'إيقاف مؤقت ⏸️',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  if (!_isDownloading)
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 1,
+                  child: GestureDetector(
+                    onTap: _cancelDownload,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22171A),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.4)),
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.close, color: Color(0xFFEF4444), size: 22),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else if (_isPaused)
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: GestureDetector(
+                    onTap: _resumeDownload,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [fieryAmber, Color(0xFFE03C00)],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: fieryAmber.withOpacity(0.45),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.play_arrow_rounded, color: Colors.white, size: 24),
+                          SizedBox(width: 6),
+                          Text(
+                            'استئناف التحميل المتوازي ⚡',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 1,
+                  child: GestureDetector(
+                    onTap: _cancelDownload,
+                    child: Container(
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22171A),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.4)),
+                      ),
+                      child: const Center(
+                        child: Icon(Icons.close, color: Color(0xFFEF4444), size: 22),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else
+            GestureDetector(
+              onTap: () => _initiateTurboDownload(),
+              child: Container(
+                height: 48,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [fieryAmber, Color(0xFFE03C00)],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
                     BoxShadow(
                       color: fieryAmber.withOpacity(0.4),
                       blurRadius: 14,
                       offset: const Offset(0, 4),
                     ),
-                ],
-              ),
-              child: Center(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    if (_isDownloading)
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: fieryAmber,
-                        ),
-                      )
-                    else
+                  ],
+                ),
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                       const Icon(
                         Icons.bolt,
                         color: Colors.white,
                         size: 20,
                       ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isDownloading
-                          ? 'جاري التنزيل المتوازي الفائق...'
-                          : _extractMp3
-                              ? 'ابدأ التنزيل واستخراج MP3 ⚡'
-                              : 'ابدأ التحميل المتسارع ⚡',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.5,
+                      const SizedBox(width: 8),
+                      Text(
+                        _extractMp3
+                            ? 'ابدأ التنزيل واستخراج MP3 ⚡'
+                            : 'ابدأ التحميل المتسارع ⚡',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
         ],
       ),
     );
