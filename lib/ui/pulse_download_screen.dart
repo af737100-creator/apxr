@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../models/device_metrics.dart';
 import '../models/download_task.dart';
+import '../models/segment_chunk.dart';
 import '../engine/turbo_download_service.dart';
 import '../engine/link_analyzer.dart';
 import '../engine/storage_path_resolver.dart';
@@ -615,18 +616,6 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     final m = (seconds ~/ 60).toString().padLeft(2, '0');
     final s = (seconds % 60).toString().padLeft(2, '0');
     return '$m:$s';
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _progressSub?.cancel();
-    _catcherSub?.cancel();
-    _speedSampleTimer?.cancel();
-    _pulseGlowController.dispose();
-    _urlInputController.dispose();
-    _smartCatcher.dispose();
-    super.dispose();
   }
 
   @override
