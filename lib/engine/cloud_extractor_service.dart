@@ -223,47 +223,12 @@ class CloudExtractorService {
       }
     }
 
-    // 4. ON-DEVICE NATIVE YOUTUBE EXPLODE EXTRACTION (Direct Google CDN pipe)
+    // 4. ON-DEVICE DEDICATED YOUTUBE TURBO ENGINE (Multi-Layer Invidious + Piped + YoutubeExplode)
     if (isYouTubeUrl(cleanUrl)) {
-      final videoIdStr = extractYouTubeVideoId(cleanUrl);
-      if (videoIdStr != null && videoIdStr.isNotEmpty) {
-        try {
-          debugPrint('[CloudExtractorService] ⚡ Zero-Wait YouTube Native Extraction for ID: $videoIdStr');
-          final yt = YoutubeExplode();
-          try {
-            final video = await yt.videos.get(VideoId(videoIdStr)).timeout(
-                  const Duration(seconds: 7),
-                );
-            final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoIdStr)).timeout(
-                  const Duration(seconds: 7),
-                );
-
-            final muxedStreams = manifest.muxed.sortByVideoQuality();
-            if (muxedStreams.isNotEmpty) {
-              final bestMuxed = muxedStreams.last;
-              var title = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-              if (!title.toLowerCase().endsWith('.mp4')) {
-                title = '$title.mp4';
-              }
-
-              return CloudExtractedMedia(
-                success: true,
-                originalUrl: cleanUrl,
-                directStreamUrl: bestMuxed.url.toString(),
-                title: title,
-                format: 'mp4',
-                quality: bestMuxed.videoQualityLabel,
-                thumbnailUrl: video.thumbnails.highResUrl,
-                estimatedSizeBytes: bestMuxed.size.totalBytes,
-                isDirectFallback: false,
-              );
-            }
-          } finally {
-            yt.close();
-          }
-        } catch (e) {
-          debugPrint('[CloudExtractorService] YoutubeExplode fast notice: $e');
-        }
+      debugPrint('[CloudExtractorService] ⚡ Activating Dedicated YouTube Turbo Engine for: $cleanUrl');
+      final ytRes = await _extractYouTubeDirect(cleanUrl);
+      if (ytRes != null && ytRes.success) {
+        return ytRes;
       }
     }
 
@@ -301,6 +266,277 @@ class CloudExtractorService {
       originalUrl: cleanUrl,
       errorMessage: 'تعذر استخراج تيار الفيديو المباشر من هذا الرابط. افتحه داخل "المتصفح الذكي 🌐" لتشغيله والتقاطه فوراً.',
     );
+  }
+
+  /// Specialized Multi-Layer YouTube Turbo Extractor
+  /// Tier 1: Invidious Public Instances Pool (Fast direct Google CDN streams)
+  /// Tier 2: YoutubeExplode Native Dart Engine (Muxed + VideoOnly + Audio Stream Fallbacks)
+  /// Tier 3: Piped API Global Network
+  /// Tier 4: SaveTube / Rapid CDN API
+  Future<CloudExtractedMedia?> _extractYouTubeDirect(String ytUrl) async {
+    final videoId = extractYouTubeVideoId(ytUrl);
+    if (videoId == null || videoId.isEmpty) return null;
+
+    debugPrint('[CloudExtractorService] 🎯 Extracting YouTube ID: $videoId');
+
+    // -------------------------------------------------------------
+    // Tier 1: Invidious Multi-Server Fast Race (Direct Google CDN Streams)
+    // -------------------------------------------------------------
+    final invidiousEndpoints = [
+      'https://inv.tux.pizza',
+      'https://invidious.nerdvpn.de',
+      'https://vid.puffyan.us',
+      'https://invidious.private.coffee',
+      'https://invidious.drgns.space',
+      'https://invidious.protokolla.fi',
+      'https://yewtu.be',
+      'https://iv.melmac.space',
+    ];
+
+    for (final host in invidiousEndpoints) {
+      try {
+        final response = await _dio.get(
+          '$host/api/v1/videos/$videoId',
+          options: Options(
+            sendTimeout: const Duration(milliseconds: 3500),
+            receiveTimeout: const Duration(milliseconds: 4000),
+          ),
+        );
+
+        if (response.statusCode == 200 && response.data != null) {
+          final data = response.data;
+          if (data is Map<String, dynamic>) {
+            var rawTitle = (data['title'] ?? 'YouTube_Video_$videoId').toString();
+            var cleanTitle = rawTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+            if (!cleanTitle.toLowerCase().endsWith('.mp4')) {
+              cleanTitle = '$cleanTitle.mp4';
+            }
+
+            // Check formatStreams (Progressive mp4 with audio)
+            if (data['formatStreams'] is List && (data['formatStreams'] as List).isNotEmpty) {
+              final formats = data['formatStreams'] as List;
+              // Pick highest quality mp4 stream
+              dynamic bestFormat = formats.first;
+              for (final f in formats) {
+                if (f is Map && f['url'] != null) {
+                  final res = (f['resolution'] ?? f['qualityLabel'] ?? '').toString();
+                  if (res.contains('720') || res.contains('1080')) {
+                    bestFormat = f;
+                    break;
+                  }
+                }
+              }
+
+              if (bestFormat is Map && bestFormat['url'] != null) {
+                final directUrl = bestFormat['url'].toString();
+                debugPrint('[CloudExtractorService] ✅ YouTube Invidious Success ($host): $directUrl');
+                return CloudExtractedMedia(
+                  success: true,
+                  originalUrl: ytUrl,
+                  directStreamUrl: directUrl,
+                  title: cleanTitle,
+                  format: 'mp4',
+                  quality: bestFormat['qualityLabel']?.toString() ?? '720p HD',
+                  thumbnailUrl: 'https://img.youtube.com/vi/$videoId/maxresdefault.jpg',
+                  isDirectFallback: false,
+                );
+              }
+            }
+
+            // Check adaptiveFormats if formatStreams was empty
+            if (data['adaptiveFormats'] is List && (data['adaptiveFormats'] as List).isNotEmpty) {
+              final adaptives = data['adaptiveFormats'] as List;
+              for (final f in adaptives) {
+                if (f is Map && f['url'] != null) {
+                  final type = (f['type'] ?? '').toString().toLowerCase();
+                  if (type.contains('video/mp4')) {
+                    final directUrl = f['url'].toString();
+                    debugPrint('[CloudExtractorService] ✅ YouTube Invidious Adaptive Success: $directUrl');
+                    return CloudExtractedMedia(
+                      success: true,
+                      originalUrl: ytUrl,
+                      directStreamUrl: directUrl,
+                      title: cleanTitle,
+                      format: 'mp4',
+                      quality: f['qualityLabel']?.toString() ?? 'HD Video',
+                      thumbnailUrl: 'https://img.youtube.com/vi/$videoId/hqdefault.jpg',
+                      isDirectFallback: false,
+                    );
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] Invidious instance $host error: $e');
+      }
+    }
+
+    // -------------------------------------------------------------
+    // Tier 2: Native YoutubeExplode Engine (Muxed + VideoOnly + Audio)
+    // -------------------------------------------------------------
+    try {
+      final yt = YoutubeExplode();
+      try {
+        final video = await yt.videos.get(VideoId(videoId)).timeout(const Duration(seconds: 6));
+        final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoId)).timeout(const Duration(seconds: 6));
+
+        var cleanTitle = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        if (!cleanTitle.toLowerCase().endsWith('.mp4')) {
+          cleanTitle = '$cleanTitle.mp4';
+        }
+
+        // 1. Try muxed
+        if (manifest.muxed.isNotEmpty) {
+          final bestMuxed = manifest.muxed.sortByVideoQuality().last;
+          debugPrint('[CloudExtractorService] ✅ YouTubeExplode Muxed Stream found');
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: ytUrl,
+            directStreamUrl: bestMuxed.url.toString(),
+            title: cleanTitle,
+            format: 'mp4',
+            quality: bestMuxed.videoQualityLabel,
+            thumbnailUrl: video.thumbnails.highResUrl,
+            estimatedSizeBytes: bestMuxed.size.totalBytes,
+            isDirectFallback: false,
+          );
+        }
+
+        // 2. Try videoOnly if muxed is empty
+        if (manifest.videoOnly.isNotEmpty) {
+          final bestVideo = manifest.videoOnly.sortByVideoQuality().last;
+          debugPrint('[CloudExtractorService] ✅ YouTubeExplode VideoOnly Stream found');
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: ytUrl,
+            directStreamUrl: bestVideo.url.toString(),
+            title: cleanTitle,
+            format: 'mp4',
+            quality: bestVideo.videoQualityLabel,
+            thumbnailUrl: video.thumbnails.highResUrl,
+            estimatedSizeBytes: bestVideo.size.totalBytes,
+            isDirectFallback: false,
+          );
+        }
+
+        // 3. Try audioOnly if video streams are empty
+        if (manifest.audioOnly.isNotEmpty) {
+          final bestAudio = manifest.audioOnly.sortByBitrate().last;
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: ytUrl,
+            directStreamUrl: bestAudio.url.toString(),
+            title: cleanTitle.replaceAll('.mp4', '.mp3'),
+            format: 'mp3',
+            quality: 'High Audio Bitrate',
+            thumbnailUrl: video.thumbnails.highResUrl,
+            estimatedSizeBytes: bestAudio.size.totalBytes,
+            isDirectFallback: false,
+          );
+        }
+      } finally {
+        yt.close();
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] YoutubeExplode error: $e');
+    }
+
+    // -------------------------------------------------------------
+    // Tier 3: Piped API Global Network
+    // -------------------------------------------------------------
+    final pipedEndpoints = [
+      'https://pipedapi.kavin.rocks',
+      'https://api.piped.privacydev.net',
+      'https://pipedapi.tokhmi.xyz',
+    ];
+
+    for (final host in pipedEndpoints) {
+      try {
+        final response = await _dio.get(
+          '$host/streams/$videoId',
+          options: Options(
+            sendTimeout: const Duration(seconds: 4),
+            receiveTimeout: const Duration(seconds: 4),
+          ),
+        );
+
+        if (response.statusCode == 200 && response.data != null) {
+          final data = response.data;
+          if (data is Map<String, dynamic> && data['videoStreams'] is List) {
+            final streams = data['videoStreams'] as List;
+            for (final s in streams) {
+              if (s is Map && s['url'] != null) {
+                final format = (s['format'] ?? '').toString();
+                if (format.contains('mp4') || format.contains('MPEG') || s['url'].toString().contains('mp4')) {
+                  var rawTitle = (data['title'] ?? 'YouTube_Video_$videoId').toString();
+                  var cleanTitle = rawTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+                  if (!cleanTitle.toLowerCase().endsWith('.mp4')) cleanTitle = '$cleanTitle.mp4';
+
+                  debugPrint('[CloudExtractorService] ✅ Piped API Stream found: ${s['url']}');
+                  return CloudExtractedMedia(
+                    success: true,
+                    originalUrl: ytUrl,
+                    directStreamUrl: s['url'].toString(),
+                    title: cleanTitle,
+                    format: 'mp4',
+                    quality: s['quality']?.toString() ?? 'HD',
+                    thumbnailUrl: data['thumbnailUrl']?.toString(),
+                    isDirectFallback: false,
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] Piped API $host error: $e');
+      }
+    }
+
+    // -------------------------------------------------------------
+    // Tier 4: SaveTube Rapid API Fallback
+    // -------------------------------------------------------------
+    try {
+      final response = await _dio.get(
+        'https://cdn35.savetube.me/info',
+        queryParameters: {'url': 'https://www.youtube.com/watch?v=$videoId'},
+        options: Options(
+          sendTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 4),
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        if (data is Map && data['data'] != null && data['data']['video_formats'] is List) {
+          final formats = data['data']['video_formats'] as List;
+          if (formats.isNotEmpty) {
+            final first = formats.first;
+            final streamUrl = first['url'];
+            if (streamUrl != null && streamUrl.toString().startsWith('http')) {
+              var title = (data['data']['title'] ?? 'YouTube_$videoId').toString();
+              title = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+              if (!title.toLowerCase().endsWith('.mp4')) title = '$title.mp4';
+
+              return CloudExtractedMedia(
+                success: true,
+                originalUrl: ytUrl,
+                directStreamUrl: streamUrl.toString(),
+                title: title,
+                format: 'mp4',
+                quality: first['quality']?.toString() ?? '720p',
+                thumbnailUrl: data['data']['thumbnail']?.toString(),
+                isDirectFallback: false,
+              );
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   /// Specialized TikTok API Extractor (TikWM + LoveTik)

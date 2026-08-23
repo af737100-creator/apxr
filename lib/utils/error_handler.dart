@@ -61,13 +61,17 @@ class HyperPulseErrorHandler {
       return 'صيغة الرابط غير صحيحة، يرجى التأكد من الرابط المدخل';
     }
 
-    final raw = error.toString();
+    final raw = error.toString().replaceFirst('Exception: ', '').trim();
     if (raw.toLowerCase().contains('network') ||
         raw.toLowerCase().contains('failed host lookup') ||
         raw.toLowerCase().contains('connection refused')) {
       return 'فشل الاتصال بالشبكة، حاول مرة أخرى';
     }
 
-    return 'حدث خطأ غير متوقع أثناء المعالجة: $raw';
+    if (raw.startsWith('حدث') || raw.startsWith('تعذر') || raw.startsWith('فشل') || raw.startsWith('لا توجد')) {
+      return raw;
+    }
+
+    return raw;
   }
 }

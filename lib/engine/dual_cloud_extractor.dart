@@ -63,9 +63,9 @@ class DualCloudExtractor {
     'https://cobalt-api.kwiatekm.tokyo/api/json',
   ];
 
-  /// Configurable primary timeout in seconds (Default: 8s)
-  static const Duration primaryTimeout = Duration(seconds: 8);
-  static const Duration secondaryTimeout = Duration(seconds: 8);
+  /// Configurable primary timeout in seconds (Quick failover if not deployed)
+  static const Duration primaryTimeout = Duration(milliseconds: 2500);
+  static const Duration secondaryTimeout = Duration(seconds: 5);
 
   /// Main extraction method with automatic failover
   static Future<DualExtractionResult> extract(String rawUrl) async {
