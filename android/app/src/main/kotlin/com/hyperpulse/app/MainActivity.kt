@@ -202,7 +202,7 @@ class MainActivity : FlutterActivity() {
                     val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
                     mediaScanIntent.data = Uri.fromFile(file)
                     sendBroadcast(mediaScanIntent)
-                } catch (_) {}
+                } catch (e: Exception) {}
             }
         } catch (e: Exception) {
             e.printStackTrace()
