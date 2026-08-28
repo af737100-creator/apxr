@@ -16,6 +16,7 @@ import 'cloud_extractor_service.dart';
 import 'zero_byte_shield_engine.dart';
 import 'smart_resume_manager.dart';
 import 'dual_network_flight_mode.dart';
+import 'android_system_bridge.dart';
 
 /// Event dispatched to listeners with real-time download telemetry.
 class TurboProgressEvent {
