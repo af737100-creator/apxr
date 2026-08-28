@@ -345,14 +345,11 @@ class DownloadManagerService extends ChangeNotifier {
       }
     }
 
-    inferredName = inferredName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-    if (inferredName.isEmpty) {
-      inferredName = 'HyperPulse_${DateTime.now().millisecondsSinceEpoch}';
-    }
-
-    if (isVideo && !inferredName.toLowerCase().endsWith('.mp4')) {
-      inferredName = '$inferredName.mp4';
-    }
+    // Sanitize file name for Android filesystem safety
+    inferredName = StoragePathResolver.sanitizeFileName(
+      inferredName,
+      fallbackExtension: isVideo ? 'mp4' : (isApk ? 'apk' : 'bin'),
+    );
 
     final destinationDir = await StoragePathResolver.resolveDownloadDirectory(
       isMediaVideo: isVideo,

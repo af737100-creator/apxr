@@ -507,7 +507,7 @@ class TurboDownloadService {
       final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?').firstMatch(contentDisposition);
       if (match != null && match.group(1) != null) {
         var rawName = Uri.decodeFull(match.group(1)!.trim());
-        rawName = rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        rawName = StoragePathResolver.sanitizeFileName(rawName);
         if (rawName.isNotEmpty) {
           task.fileName = rawName;
         }

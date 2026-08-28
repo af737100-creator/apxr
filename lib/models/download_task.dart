@@ -18,7 +18,7 @@ class DownloadTask {
   final String id;
   final String sourceUrl;
   String fileName;
-  final String destinationDirectory;
+  String destinationDirectory;
   int totalSizeBytes;
   int downloadedBytes;
   DownloadStatus status;

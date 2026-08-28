@@ -27,11 +27,66 @@ class StorageLocationInfo {
 }
 
 /// Resolves the optimal, scoped-storage compliant download destination path
-/// for modern Android (13, 14, 15, 16+) and iOS/Desktop.
+/// for modern Android (13, 14, 15, 16+) and iOS/Desktop with zero-crash fallbacks.
 class StoragePathResolver {
   static const String appSubfolder = 'HyperPulse';
 
-  /// Resolves the public Movies directory (`Movies/HyperPulse`) for direct Gallery indexing
+  /// Sanitizes any string into a valid, safe cross-platform file name.
+  /// Removes emojis, hashtags, illegal FAT32/Linux characters, trailing dots and spaces,
+  /// and caps the length to prevent OS filesystem errors.
+  static String sanitizeFileName(String name, {String fallbackExtension = 'mp4'}) {
+    if (name.trim().isEmpty) {
+      return 'HyperPulse_${DateTime.now().millisecondsSinceEpoch}.$fallbackExtension';
+    }
+
+    String clean = name.trim();
+
+    // 1. Separate base name and extension
+    String ext = '';
+    final lastDot = clean.lastIndexOf('.');
+    if (lastDot != -1 && lastDot < clean.length - 1 && clean.length - lastDot <= 6) {
+      ext = clean.substring(lastDot);
+      clean = clean.substring(0, lastDot);
+    } else if (fallbackExtension.isNotEmpty) {
+      ext = fallbackExtension.startsWith('.') ? fallbackExtension : '.$fallbackExtension';
+    }
+
+    // 2. Remove illegal characters for Android/Linux/Windows filesystems
+    // Replace: \ / : * ? " < > | \n \r \t and non-printable chars
+    clean = clean.replaceAll(RegExp(r'[\\/:*?"<>|\r\n\t\x00-\x1F]'), '_');
+
+    // 3. Remove or replace hashtag symbols and multiple consecutive underscores
+    clean = clean.replaceAll('#', '_');
+    clean = clean.replaceAll(RegExp(r'_+'), '_');
+
+    // 4. Remove leading/trailing dots and spaces (causes FAT32/Android OS 22 Invalid argument error)
+    clean = clean.trim();
+    while (clean.endsWith('.') || clean.endsWith(' ') || clean.endsWith('_')) {
+      if (clean.isEmpty) break;
+      clean = clean.substring(0, clean.length - 1).trim();
+    }
+    while (clean.startsWith('.') || clean.startsWith(' ') || clean.startsWith('_')) {
+      if (clean.isEmpty) break;
+      clean = clean.substring(1).trim();
+    }
+
+    // 5. Cap base name length to 70 characters
+    if (clean.length > 70) {
+      clean = clean.substring(0, 70).trim();
+      while (clean.endsWith('.') || clean.endsWith('_')) {
+        clean = clean.substring(0, clean.length - 1);
+      }
+    }
+
+    // 6. Final fallback if string became empty
+    if (clean.isEmpty) {
+      clean = 'HyperPulse_${DateTime.now().millisecondsSinceEpoch}';
+    }
+
+    return '$clean$ext';
+  }
+
+  /// Resolves the public Movies directory (`Movies/HyperPulse`) with verified write test.
   static Future<String> resolveMoviesDirectory() async {
     try {
       if (Platform.isAndroid) {
@@ -40,9 +95,13 @@ class StoragePathResolver {
         if (nativeMovies != null && nativeMovies.isNotEmpty) {
           final target = Directory(nativeMovies);
           if (!await target.exists()) {
-            await target.create(recursive: true);
+            try {
+              await target.create(recursive: true);
+            } catch (_) {}
           }
-          return target.path;
+          if (await _isWritable(target.path)) {
+            return target.path;
+          }
         }
 
         // 2. Standard Android /storage/emulated/0/Movies/HyperPulse
@@ -50,12 +109,14 @@ class StoragePathResolver {
         if (!await fallbackDir.exists()) {
           try {
             await fallbackDir.create(recursive: true);
-            return fallbackDir.path;
           } catch (_) {}
+        }
+        if (await _isWritable(fallbackDir.path)) {
+          return fallbackDir.path;
         }
       }
 
-      // 3. Fallback to standard Downloads
+      // 3. Fallback to standard verified Downloads or App Sandbox
       return await resolveDownloadDirectory(isMediaVideo: false);
     } catch (e) {
       debugPrint('[StoragePathResolver] resolveMoviesDirectory error: $e');
@@ -63,48 +124,61 @@ class StoragePathResolver {
     }
   }
 
-  /// Resolves the primary valid directory to save downloads.
-  /// If [isMediaVideo] is true, routes directly to `Movies/HyperPulse` for instant Gallery visibility.
+  /// Resolves a 100% verified writable directory to save downloads.
+  /// Seamlessly cascades from Public Movies/Downloads -> External App Sandbox -> Internal App Documents.
   static Future<String> resolveDownloadDirectory({
     bool isMediaVideo = false,
     bool preferPublicDownloads = true,
   }) async {
     try {
       if (isMediaVideo && Platform.isAndroid) {
-        return await resolveMoviesDirectory();
+        final moviesDir = await resolveMoviesDirectory();
+        if (await _isWritable(moviesDir)) {
+          return moviesDir;
+        }
       }
 
       if (Platform.isAndroid) {
         if (preferPublicDownloads) {
           // 1. Attempt standard Public Downloads
-          final Directory? downloadsDir = await getDownloadsDirectory();
-          if (downloadsDir != null && await _isWritable(downloadsDir.path)) {
-            final target = Directory(p.join(downloadsDir.path, appSubfolder));
-            if (!await target.exists()) {
-              await target.create(recursive: true);
+          try {
+            final Directory? downloadsDir = await getDownloadsDirectory();
+            if (downloadsDir != null) {
+              final target = Directory(p.join(downloadsDir.path, appSubfolder));
+              if (!await target.exists()) {
+                await target.create(recursive: true);
+              }
+              if (await _isWritable(target.path)) {
+                return target.path;
+              }
             }
-            return target.path;
-          }
+          } catch (_) {}
 
           // 2. Direct path to /storage/emulated/0/Download/HyperPulse
-          final directDownloads = Directory('/storage/emulated/0/Download/$appSubfolder');
-          if (!await directDownloads.exists()) {
-            try {
+          try {
+            final directDownloads = Directory('/storage/emulated/0/Download/$appSubfolder');
+            if (!await directDownloads.exists()) {
               await directDownloads.create(recursive: true);
+            }
+            if (await _isWritable(directDownloads.path)) {
               return directDownloads.path;
-            } catch (_) {}
-          }
+            }
+          } catch (_) {}
+        }
 
-          // 3. Fallback to External App Storage
+        // 3. Guaranteed External App Storage (Scoped-Storage safe, no permission needed)
+        try {
           final Directory? extDir = await getExternalStorageDirectory();
-          if (extDir != null && await _isWritable(extDir.path)) {
+          if (extDir != null) {
             final target = Directory(p.join(extDir.path, 'Downloads'));
             if (!await target.exists()) {
               await target.create(recursive: true);
             }
-            return target.path;
+            if (await _isWritable(target.path)) {
+              return target.path;
+            }
           }
-        }
+        } catch (_) {}
 
         // 4. Guaranteed Safe Sandbox (Application Documents)
         final Directory appDocDir = await getApplicationDocumentsDirectory();
@@ -121,9 +195,9 @@ class StoragePathResolver {
         }
         return target.path;
       } else {
-        // Desktop / Other platforms
+        // Desktop / Web
         final Directory? downloadsDir = await getDownloadsDirectory();
-        if (downloadsDir != null) {
+        if (downloadsDir != null && await _isWritable(downloadsDir.path)) {
           return downloadsDir.path;
         }
         final Directory appDocDir = await getApplicationDocumentsDirectory();
@@ -200,9 +274,15 @@ class StoragePathResolver {
   /// Helper to test write permissions inside a directory
   static Future<bool> _isWritable(String path) async {
     try {
-      final testFile = File(p.join(path, '.hyperpulse_write_test'));
-      await testFile.writeAsString('test');
-      await testFile.delete();
+      final dir = Directory(path);
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final testFile = File(p.join(path, '.hyperpulse_write_test_${DateTime.now().millisecondsSinceEpoch}'));
+      await testFile.writeAsString('test', flush: true);
+      if (await testFile.exists()) {
+        await testFile.delete();
+      }
       return true;
     } catch (_) {
       return false;

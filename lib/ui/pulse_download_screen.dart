@@ -427,16 +427,11 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           inferredFormat.toLowerCase().contains('mp4') ||
           inferredFormat.toLowerCase().contains('webm');
 
-      if (isVideo) {
-        inferredFormat = 'mp4';
-        inferredTitle = inferredTitle.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-        if (inferredTitle.isEmpty) {
-          inferredTitle = 'HyperPulse_Video_${DateTime.now().millisecondsSinceEpoch}.mp4';
-        }
-        if (!inferredTitle.toLowerCase().endsWith('.mp4')) {
-          inferredTitle = '$inferredTitle.mp4';
-        }
-      }
+      // Thoroughly sanitize file name to avoid Android FAT32/Linux file system crashes
+      inferredTitle = StoragePathResolver.sanitizeFileName(
+        inferredTitle,
+        fallbackExtension: isVideo ? 'mp4' : inferredFormat,
+      );
 
       _resolvedStorageDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: isVideo);
       final finalFilePath = '$_resolvedStorageDir/$inferredTitle';
@@ -446,7 +441,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         _currentFileName = inferredTitle;
         _targetFilePath = finalFilePath;
         _statusMessage = isSocial
-            ? 'تنزيل مباشر عالي السرعة (Movies/HyperPulse)'
+            ? 'تنزيل فائق مباشر (محرك التخزين الآمن ⚡)'
             : 'تهيئة الأنوية المتوازية ($_activeThreads خيوط)';
       });
 
@@ -465,12 +460,36 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         destinationDirectory: _resolvedStorageDir,
       );
 
-      await _turboService.startDownload(
-        task: task,
-        deviceMetrics: deviceProfile,
-        ramBufferThresholdMb: 64,
-        forceSingleStream: isSocial,
-      );
+      try {
+        await _turboService.startDownload(
+          task: task,
+          deviceMetrics: deviceProfile,
+          ramBufferThresholdMb: 64,
+          forceSingleStream: isSocial,
+        );
+      } catch (downloadErr) {
+        // If storage write permission failed on public folder, auto-fallback to internal safe sandbox
+        if (downloadErr is FileSystemException ||
+            downloadErr.toString().toLowerCase().contains('permission') ||
+            downloadErr.toString().toLowerCase().contains('cannot open file') ||
+            downloadErr.toString().toLowerCase().contains('os error')) {
+          debugPrint('[PulseDownloadScreen] ⚠️ Switching to guaranteed safe app sandbox...');
+          final safeDir = await StoragePathResolver.resolveDownloadDirectory(
+            isMediaVideo: false,
+            preferPublicDownloads: false,
+          );
+          task.destinationDirectory = safeDir;
+          _resolvedStorageDir = safeDir;
+          await _turboService.startDownload(
+            task: task,
+            deviceMetrics: deviceProfile,
+            ramBufferThresholdMb: 64,
+            forceSingleStream: isSocial,
+          );
+        } else {
+          rethrow;
+        }
+      }
     } catch (e) {
       final friendlyError = HyperPulseErrorHandler.getFriendlyMessage(e);
       setState(() {
