@@ -62,24 +62,20 @@ class RamCacheManager {
 
   /// Initializes the target file descriptor and pre-allocates file bounds.
   Future<void> initialize({int? expectedTotalSize}) async {
-    try {
-      final file = File(targetFilePath);
-      if (!await file.parent.exists()) {
+    final file = File(targetFilePath);
+    if (!await file.parent.exists()) {
+      try {
         await file.parent.create(recursive: true);
-      }
+      } catch (_) {}
+    }
 
-      _fileHandle = await file.open(mode: FileMode.write);
+    _fileHandle = await file.open(mode: FileMode.write);
 
-      // If total file size is known, pre-allocate space to prevent disk fragmentation
-      if (expectedTotalSize != null && expectedTotalSize > 0) {
-        try {
-          await _fileHandle!.truncate(expectedTotalSize);
-        } catch (_) {}
-      }
-    } catch (e) {
-      debugPrint('[RamCacheManager] Initialize warning: $e');
-      final file = File(targetFilePath);
-      _fileHandle = await file.open(mode: FileMode.write);
+    // If total file size is known, pre-allocate space to prevent disk fragmentation
+    if (expectedTotalSize != null && expectedTotalSize > 0) {
+      try {
+        await _fileHandle!.truncate(expectedTotalSize);
+      } catch (_) {}
     }
   }
 

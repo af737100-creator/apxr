@@ -217,7 +217,15 @@ class TurboDownloadService {
           } catch (_) {}
         }
         if (await tempFile.exists()) {
-          await tempFile.rename(task.fullFilePath);
+          try {
+            await tempFile.rename(task.fullFilePath);
+          } catch (_) {
+            // Fallback for cross-device / Scoped storage boundary where rename is not supported
+            await tempFile.copy(task.fullFilePath);
+            try {
+              await tempFile.delete();
+            } catch (_) {}
+          }
         }
 
         // Clean up checkpoint on success
@@ -442,7 +450,9 @@ class TurboDownloadService {
 
     final targetFile = File(task.tempFilePath);
     if (!await targetFile.parent.exists()) {
-      await targetFile.parent.create(recursive: true);
+      try {
+        await targetFile.parent.create(recursive: true);
+      } catch (_) {}
     }
 
     final singleSegment = SegmentChunk(
@@ -453,15 +463,6 @@ class TurboDownloadService {
     );
     task.segments.clear();
     task.segments.add(singleSegment);
-
-    final ramCache = RamCacheManager(
-      targetFilePath: task.tempFilePath,
-      flushThresholdBytes: ramBufferThresholdMb * 1024 * 1024,
-    );
-    await ramCache.initialize(expectedTotalSize: task.totalSizeBytes);
-
-    int bytesDownloadedSinceLastTick = 0;
-    DateTime lastSpeedTick = DateTime.now();
 
     final uri = Uri.tryParse(task.sourceUrl);
     String referer = 'https://www.google.com/';
@@ -503,18 +504,6 @@ class TurboDownloadService {
       throw Exception('تعذر فتح تيار تحميل الملف من السيرفر');
     }
 
-    final contentDisposition = response.headers.value('content-disposition');
-    if (contentDisposition != null && contentDisposition.contains('filename')) {
-      final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?').firstMatch(contentDisposition);
-      if (match != null && match.group(1) != null) {
-        var rawName = Uri.decodeFull(match.group(1)!.trim());
-        rawName = StoragePathResolver.sanitizeFileName(rawName);
-        if (rawName.isNotEmpty) {
-          task.fileName = rawName;
-        }
-      }
-    }
-
     final contentType = response.headers.value('content-type')?.toLowerCase() ?? '';
     final isMediaVideo = task.isVideo;
 
@@ -528,56 +517,54 @@ class TurboDownloadService {
       singleSegment.endByte = task.totalSizeBytes > 0 ? task.totalSizeBytes : 0;
     }
 
-    int currentOffset = 0;
+    int bytesDownloadedSinceLastTick = 0;
+    DateTime lastSpeedTick = DateTime.now();
 
-    await for (final Uint8List chunk in stream) {
-      final int chunkSize = chunk.lengthInBytes;
-      task.downloadedBytes += chunkSize;
-      singleSegment.downloadedBytes += chunkSize;
-      bytesDownloadedSinceLastTick += chunkSize;
+    final IOSink sink = targetFile.openWrite(mode: FileMode.write);
 
-      await ramCache.writeChunkData(
-        segmentIndex: 0,
-        fileOffset: currentOffset,
-        data: chunk,
-      );
-      currentOffset += chunkSize;
+    try {
+      await for (final Uint8List chunk in stream) {
+        sink.add(chunk);
+        final int chunkSize = chunk.lengthInBytes;
+        task.downloadedBytes += chunkSize;
+        singleSegment.downloadedBytes += chunkSize;
+        bytesDownloadedSinceLastTick += chunkSize;
 
-      final now = DateTime.now();
-      final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
-      if (elapsedMs >= 300) {
-        final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
-        task.speedBytesPerSecond = speedBps;
-        bytesDownloadedSinceLastTick = 0;
-        lastSpeedTick = now;
+        final now = DateTime.now();
+        final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
+        if (elapsedMs >= 250) {
+          final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
+          task.speedBytesPerSecond = speedBps;
+          bytesDownloadedSinceLastTick = 0;
+          lastSpeedTick = now;
 
-        double progressPct = 0.0;
-        if (task.totalSizeBytes > 0) {
-          progressPct = (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 0.99);
-        } else {
-          progressPct = (task.downloadedBytes / (task.downloadedBytes + 5 * 1024 * 1024)).clamp(0.05, 0.95);
+          double progressPct = 0.0;
+          if (task.totalSizeBytes > 0) {
+            progressPct = (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 0.99);
+          } else {
+            progressPct = (task.downloadedBytes / (task.downloadedBytes + 5 * 1024 * 1024)).clamp(0.05, 0.95);
+          }
+
+          _progressController.add(
+            TurboProgressEvent(
+              taskId: task.id,
+              totalBytes: task.totalSizeBytes,
+              downloadedBytes: task.downloadedBytes,
+              speedBytesPerSec: speedBps,
+              progressPercent: progressPct,
+              segments: [singleSegment],
+              bufferedRamMb: 0.0,
+              isSingleStream: true,
+              statusText: '⚡ تيار فائق السرعة مباشر (Direct Turbo Stream)',
+              activeThreads: 1,
+            ),
+          );
         }
-
-        _progressController.add(
-          TurboProgressEvent(
-            taskId: task.id,
-            totalBytes: task.totalSizeBytes,
-            downloadedBytes: task.downloadedBytes,
-            speedBytesPerSec: speedBps,
-            progressPercent: progressPct,
-            segments: [singleSegment],
-            bufferedRamMb: ramCache.currentBufferedMb,
-            isSingleStream: true,
-            statusText: '⚡ تيار فائق السرعة مباشر (Direct Turbo Stream)',
-            activeThreads: 1,
-          ),
-        );
       }
+      await sink.flush();
+    } finally {
+      await sink.close();
     }
-
-    task.status = DownloadStatus.merging;
-    await ramCache.flushToDisk();
-    await ramCache.dispose();
 
     singleSegment.status = ChunkStatus.completed;
     task.status = DownloadStatus.completed;
