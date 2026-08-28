@@ -323,7 +323,7 @@ class TurboDownloadService {
     int ramBufferThresholdMb = 64,
   }) async {
     task.status = DownloadStatus.downloading;
-    task.threadCount = 8;
+    task.threadCount = 4;
 
     final yt = YoutubeExplode();
     try {
@@ -345,7 +345,9 @@ class TurboDownloadService {
 
       final targetFile = File(task.tempFilePath);
       if (!await targetFile.parent.exists()) {
-        await targetFile.parent.create(recursive: true);
+        try {
+          await targetFile.parent.create(recursive: true);
+        } catch (_) {}
       }
 
       final singleSegment = SegmentChunk(
@@ -358,64 +360,73 @@ class TurboDownloadService {
       task.segments.add(singleSegment);
 
       final rawByteStream = yt.videos.streamsClient.get(targetStreamInfo);
-
-      final ramCache = RamCacheManager(
-        targetFilePath: task.tempFilePath,
-        flushThresholdBytes: ramBufferThresholdMb * 1024 * 1024,
-      );
-      await ramCache.initialize(expectedTotalSize: task.totalSizeBytes);
+      final IOSink sink = targetFile.openWrite(mode: FileMode.write);
 
       int bytesDownloadedSinceLastTick = 0;
       DateTime lastSpeedTick = DateTime.now();
-      int currentOffset = 0;
 
-      await for (final List<int> chunkData in rawByteStream) {
-        final uint8Chunk = chunkData is Uint8List ? chunkData : Uint8List.fromList(chunkData);
-        final int chunkSize = uint8Chunk.lengthInBytes;
+      try {
+        await for (final List<int> chunkData in rawByteStream) {
+          sink.add(chunkData);
+          final int chunkSize = chunkData.length;
 
-        task.downloadedBytes += chunkSize;
-        singleSegment.downloadedBytes += chunkSize;
-        bytesDownloadedSinceLastTick += chunkSize;
+          task.downloadedBytes += chunkSize;
+          singleSegment.downloadedBytes += chunkSize;
+          bytesDownloadedSinceLastTick += chunkSize;
 
-        await ramCache.writeChunkData(
-          segmentIndex: 0,
-          fileOffset: currentOffset,
-          data: uint8Chunk,
-        );
-        currentOffset += chunkSize;
+          final now = DateTime.now();
+          final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
+          if (elapsedMs >= 250) {
+            final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
+            task.speedBytesPerSecond = speedBps;
+            bytesDownloadedSinceLastTick = 0;
+            lastSpeedTick = now;
 
-        final now = DateTime.now();
-        final elapsedMs = now.difference(lastSpeedTick).inMilliseconds;
-        if (elapsedMs >= 250) {
-          final double speedBps = (bytesDownloadedSinceLastTick / elapsedMs) * 1000.0;
-          task.speedBytesPerSecond = speedBps;
-          bytesDownloadedSinceLastTick = 0;
-          lastSpeedTick = now;
+            final double progressPct = task.totalSizeBytes > 0
+                ? (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 0.99)
+                : 0.5;
 
-          final double progressPct = task.totalSizeBytes > 0
-              ? (task.downloadedBytes / task.totalSizeBytes).clamp(0.0, 0.99)
-              : 0.5;
-
-          _progressController.add(
-            TurboProgressEvent(
-              taskId: task.id,
-              totalBytes: task.totalSizeBytes,
-              downloadedBytes: task.downloadedBytes,
-              speedBytesPerSec: speedBps,
-              progressPercent: progressPct,
-              segments: [singleSegment],
-              bufferedRamMb: ramCache.currentBufferedMb,
-              isSingleStream: false,
-              statusText: '⚡ تيار مباشر فائق من سيرفرات Google CDN (64MB RAM Cache)',
-              activeThreads: 8,
-            ),
-          );
+            _progressController.add(
+              TurboProgressEvent(
+                taskId: task.id,
+                totalBytes: task.totalSizeBytes,
+                downloadedBytes: task.downloadedBytes,
+                speedBytesPerSec: speedBps,
+                progressPercent: progressPct,
+                segments: [singleSegment],
+                bufferedRamMb: 0.0,
+                isSingleStream: false,
+                statusText: '⚡ تيار مباشر فائق من سيرفرات YouTube CDN',
+                activeThreads: 4,
+              ),
+            );
+          }
         }
+        await sink.flush();
+      } finally {
+        await sink.close();
       }
 
-      task.status = DownloadStatus.merging;
-      await ramCache.flushToDisk();
-      await ramCache.dispose();
+      // Finalize file: move part to destination and scan to gallery
+      final finalFile = File(task.fullFilePath);
+      if (await finalFile.exists()) {
+        try {
+          await finalFile.delete();
+        } catch (_) {}
+      }
+      if (await targetFile.exists()) {
+        try {
+          await targetFile.rename(task.fullFilePath);
+        } catch (_) {
+          await targetFile.copy(task.fullFilePath);
+          try {
+            await targetFile.delete();
+          } catch (_) {}
+        }
+      }
+      try {
+        await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
+      } catch (_) {}
 
       singleSegment.status = ChunkStatus.completed;
       task.status = DownloadStatus.completed;
@@ -431,8 +442,8 @@ class TurboDownloadService {
           segments: [singleSegment],
           bufferedRamMb: 0.0,
           isSingleStream: false,
-          statusText: '⚡ اكتمل التحميل الفضائي بنجاح!',
-          activeThreads: 8,
+          statusText: '⚡ اكتمل التحميل وحفظ الفيديو في المعرض بنجاح!',
+          activeThreads: 4,
         ),
       );
     } finally {
@@ -566,6 +577,27 @@ class TurboDownloadService {
       await sink.close();
     }
 
+    // Finalize file: move part to destination and scan to gallery
+    final finalFile = File(task.fullFilePath);
+    if (await finalFile.exists()) {
+      try {
+        await finalFile.delete();
+      } catch (_) {}
+    }
+    if (await targetFile.exists()) {
+      try {
+        await targetFile.rename(task.fullFilePath);
+      } catch (_) {
+        await targetFile.copy(task.fullFilePath);
+        try {
+          await targetFile.delete();
+        } catch (_) {}
+      }
+    }
+    try {
+      await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
+    } catch (_) {}
+
     singleSegment.status = ChunkStatus.completed;
     task.status = DownloadStatus.completed;
     task.finishedAt = DateTime.now();
@@ -580,7 +612,7 @@ class TurboDownloadService {
         segments: [singleSegment],
         bufferedRamMb: 0.0,
         isSingleStream: true,
-        statusText: 'اكتمل التحميل بنجاح',
+        statusText: 'اكتمل التحميل وحفظ الفيديو في المعرض بنجاح!',
         activeThreads: 1,
       ),
     );

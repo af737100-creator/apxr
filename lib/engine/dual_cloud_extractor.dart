@@ -93,7 +93,7 @@ class DualCloudExtractor {
     }
 
     try {
-      final winner = await _raceFirstSuccessful(masterRacers, timeout: const Duration(seconds: 6));
+      final winner = await _raceFirstSuccessful(masterRacers, timeout: const Duration(seconds: 10));
       if (winner != null && winner.success && winner.directUrl != null && winner.directUrl!.isNotEmpty) {
         debugPrint('[DualCloudExtractor] 🏆 WINNER: ${winner.providerUsed} -> ${winner.directUrl}');
         return winner;

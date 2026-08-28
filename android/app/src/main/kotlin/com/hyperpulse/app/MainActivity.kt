@@ -169,27 +169,40 @@ class MainActivity : FlutterActivity() {
         try {
             val file = File(filePath)
             if (file.exists()) {
+                val lower = filePath.lowercase()
                 val mimeType = when {
-                    filePath.endsWith(".mp4", ignoreCase = true) -> "video/mp4"
-                    filePath.endsWith(".mp3", ignoreCase = true) -> "audio/mp3"
-                    filePath.endsWith(".mkv", ignoreCase = true) -> "video/x-matroska"
-                    filePath.endsWith(".webm", ignoreCase = true) -> "video/webm"
+                    lower.endsWith(".mp4") -> "video/mp4"
+                    lower.endsWith(".mp3") -> "audio/mpeg"
+                    lower.endsWith(".m4a") -> "audio/mp4"
+                    lower.endsWith(".aac") -> "audio/aac"
+                    lower.endsWith(".wav") -> "audio/wav"
+                    lower.endsWith(".flac") -> "audio/flac"
+                    lower.endsWith(".mkv") -> "video/x-matroska"
+                    lower.endsWith(".webm") -> "video/webm"
+                    lower.endsWith(".mov") -> "video/quicktime"
+                    lower.endsWith(".avi") -> "video/x-msvideo"
+                    lower.endsWith(".3gp") -> "video/3gpp"
+                    lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+                    lower.endsWith(".png") -> "image/png"
+                    lower.endsWith(".webp") -> "image/webp"
                     else -> "*/*"
                 }
 
-                // 1. Android Modern MediaScannerConnection
+                // 1. Android MediaScannerConnection (Official Gallery & Google Photos indexer)
                 MediaScannerConnection.scanFile(
-                    this,
+                    applicationContext,
                     arrayOf(file.absolutePath),
                     arrayOf(mimeType)
                 ) { path, uri ->
-                    // Media indexed successfully into MediaStore
+                    // Successfully indexed into MediaStore
                 }
 
-                // 2. Legacy Broadcast for maximum compatibility across Android 8-15
-                val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-                mediaScanIntent.data = Uri.fromFile(file)
-                sendBroadcast(mediaScanIntent)
+                // 2. Legacy Broadcast for instant gallery refresh
+                try {
+                    val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+                    mediaScanIntent.data = Uri.fromFile(file)
+                    sendBroadcast(mediaScanIntent)
+                } catch (_) {}
             }
         } catch (e: Exception) {
             e.printStackTrace()

@@ -417,6 +417,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           directStreamUrl = cloudResult.directStreamUrl;
           inferredTitle = cloudResult.title;
           inferredFormat = 'mp4';
+        } else if (CloudExtractorService.isYouTubeUrl(cleanUrl)) {
+          // Native YouTube engine fallback on device
+          directStreamUrl = cleanUrl;
+          final vidId = CloudExtractorService.extractYouTubeVideoId(cleanUrl) ?? 'video_${DateTime.now().millisecondsSinceEpoch}';
+          inferredTitle = 'YouTube_$vidId.mp4';
+          inferredFormat = 'mp4';
         } else {
           throw Exception(cloudResult.errorMessage ?? 'فشل استخراج الفيديو السحابي');
         }

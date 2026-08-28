@@ -345,7 +345,7 @@ class CloudExtractorService {
     }
 
     try {
-      final winner = await completer.future.timeout(const Duration(seconds: 5));
+      final winner = await completer.future.timeout(const Duration(seconds: 10));
       if (winner != null) return winner;
     } catch (_) {}
 
@@ -591,8 +591,8 @@ class CloudExtractorService {
     try {
       final yt = YoutubeExplode();
       try {
-        final video = await yt.videos.get(VideoId(videoId)).timeout(const Duration(seconds: 5));
-        final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoId)).timeout(const Duration(seconds: 5));
+        final video = await yt.videos.get(VideoId(videoId)).timeout(const Duration(seconds: 8));
+        final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoId)).timeout(const Duration(seconds: 8));
 
         var cleanTitle = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
         if (!cleanTitle.toLowerCase().endsWith('.mp4')) {
