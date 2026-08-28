@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 /// In-memory buffered block representing downloaded bytes awaiting synchronized disk write.
 class MemoryBlock {

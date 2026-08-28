@@ -11,6 +11,7 @@ import '../models/segment_chunk.dart';
 import '../isolates/chunk_worker_isolate.dart';
 import 'neural_segmentation_engine.dart';
 import 'ram_cache_manager.dart';
+import 'storage_path_resolver.dart';
 import 'cloud_extractor_service.dart';
 import 'zero_byte_shield_engine.dart';
 import 'smart_resume_manager.dart';
