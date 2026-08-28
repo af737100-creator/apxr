@@ -201,7 +201,16 @@ class CloudExtractorService {
       );
     }
 
-    // 2. DEDICATED YOUTUBE TURBO ENGINE (Prioritized for zero-wait YouTube stream extraction)
+    // 2. Multi-Engine Fast Proxy (/api/extract on local/cloud backend)
+    try {
+      final localRes = await _extractViaLocalServerProxy(cleanUrl);
+      if (localRes != null && localRes.success) {
+        debugPrint('[CloudExtractorService] ⚡ Local/Backend Proxy Extraction Succeeded: ${localRes.directStreamUrl}');
+        return localRes;
+      }
+    } catch (_) {}
+
+    // 3. DEDICATED YOUTUBE TURBO ENGINE (Prioritized for zero-wait YouTube stream extraction)
     if (isYouTubeUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] ⚡ Activating Dedicated YouTube Turbo Engine for: $cleanUrl');
       final ytRes = await _extractYouTubeDirect(cleanUrl);
@@ -210,7 +219,7 @@ class CloudExtractorService {
       }
     }
 
-    // 3. DEDICATED TIKTOK ENGINE (TikWM + Tiklydown + LoveTik Parallel Race)
+    // 4. DEDICATED TIKTOK ENGINE (TikWM + Tiklydown + LoveTik Parallel Race)
     if (isTikTokUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] 🎵 Activating Dedicated TikTok Engine for: $cleanUrl');
       final tikTokRes = await _extractTikTokDirect(cleanUrl);
@@ -219,7 +228,7 @@ class CloudExtractorService {
       }
     }
 
-    // 4. PRIMARY & SECONDARY DUAL SERVER EXTRACTOR (Railway yt-dlp -> Cobalt Failover)
+    // 5. PRIMARY & SECONDARY DUAL SERVER EXTRACTOR (10-Engine Parallel Race)
     if (isSocialVideoPlatform(cleanUrl)) {
       debugPrint('[CloudExtractorService] 🛰️ Invoking DualCloudExtractor for: $cleanUrl');
       final dualRes = await DualCloudExtractor.extract(cleanUrl);
@@ -1004,5 +1013,49 @@ class CloudExtractorService {
     } catch (_) {}
     return null;
   }
+
+  /// Query Universal Extractor on local or backend server (/api/extract)
+  Future<CloudExtractedMedia?> _extractViaLocalServerProxy(String cleanUrl) async {
+    try {
+      final response = await _dio.get(
+        '/api/extract',
+        queryParameters: {'url': cleanUrl},
+        options: Options(
+          sendTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 5),
+          headers: {'Accept': 'application/json'},
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final data = response.data;
+        if (data is Map && data['success'] == true && data['direct_url'] != null) {
+          final directUrl = data['direct_url'].toString();
+          if (directUrl.startsWith('http')) {
+            var title = (data['title'] ?? 'HyperPulse_Media').toString();
+            title = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+            final format = data['format']?.toString() ?? 'mp4';
+            if (!title.toLowerCase().endsWith('.$format')) {
+              title = '$title.$format';
+            }
+
+            return CloudExtractedMedia(
+              success: true,
+              originalUrl: cleanUrl,
+              directStreamUrl: directUrl,
+              title: title,
+              format: format,
+              quality: data['provider']?.toString() ?? 'HyperPulse Multi-Engine Turbo ⚡',
+              thumbnailUrl: data['thumbnail']?.toString(),
+              estimatedSizeBytes: (data['size'] is int) ? data['size'] : null,
+              isDirectFallback: false,
+            );
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
 }
+
 
