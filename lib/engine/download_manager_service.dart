@@ -317,14 +317,25 @@ class DownloadManagerService extends ChangeNotifier {
     bool extractMp3 = false,
   }) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(url.trim());
-    final isSocial = CloudExtractorService.isSocialVideoPlatform(cleanUrl);
+    final isYouTube = CloudExtractorService.isYouTubeUrl(cleanUrl);
+    final isSocial = !isYouTube && CloudExtractorService.isSocialVideoPlatform(cleanUrl);
 
     String directUrl = cleanUrl;
     String inferredName = preferredTitle ?? 'file_${DateTime.now().millisecondsSinceEpoch}';
-    bool isVideo = isSocial;
+    bool isVideo = isYouTube || isSocial;
     bool isApk = cleanUrl.toLowerCase().contains('.apk') || inferredName.toLowerCase().endsWith('.apk');
 
-    if (isSocial) {
+    if (isYouTube) {
+      // Direct YouTube stream handling: lightning fast, no cloud extractor wait needed
+      final ytId = CloudExtractorService.extractYouTubeVideoId(cleanUrl);
+      if (preferredTitle == null || preferredTitle.isEmpty) {
+        inferredName = 'YouTube_${ytId ?? DateTime.now().millisecondsSinceEpoch}.mp4';
+      } else if (!inferredName.toLowerCase().endsWith('.mp4') && !inferredName.toLowerCase().endsWith('.mkv')) {
+        inferredName = '$inferredName.mp4';
+      }
+      isVideo = true;
+      directUrl = cleanUrl;
+    } else if (isSocial) {
       final cloudRes = await _cloudExtractor.extractDirectMedia(cleanUrl);
       if (cloudRes.success) {
         directUrl = cloudRes.directStreamUrl;

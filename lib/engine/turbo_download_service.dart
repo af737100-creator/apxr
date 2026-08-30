@@ -235,6 +235,7 @@ class TurboDownloadService {
     int attempts = 0;
     while (attempts < maxZeroByteRetries) {
       attempts++;
+      task.downloadedBytes = 0;
       try {
         await _performDownloadPipeline(
           task: task,
