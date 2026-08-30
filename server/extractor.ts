@@ -254,7 +254,36 @@ async function extractTikTokLoveTik(url: string): Promise<ExtractionResult | nul
 // Instagram, Facebook, Threads, Twitter, Reddit & Universal Extractors
 // -------------------------------------------------------------
 
-async function extractInstagramMulti(url: string): Promise<ExtractionResult | null> {
+// Helper to resolve shortlinks & redirects (fb.watch, facebook.com/share, etc.)
+async function resolveCanonicalUrl(url: string): Promise<string> {
+  const lower = url.toLowerCase();
+  if (
+    lower.includes('fb.watch') ||
+    lower.includes('facebook.com/share/') ||
+    lower.includes('instagram.com/share/') ||
+    lower.includes('vm.tiktok.com') ||
+    lower.includes('vt.tiktok.com') ||
+    lower.includes('youtu.be/') ||
+    lower.includes('bit.ly/') ||
+    lower.includes('t.co/')
+  ) {
+    try {
+      const resp = await axios.get(url, {
+        maxRedirects: 5,
+        timeout: 3500,
+        headers: { 'User-Agent': BROWSER_UA },
+      });
+      if (resp.request?.res?.responseUrl) {
+        return resp.request.res.responseUrl;
+      }
+    } catch (_) {}
+  }
+  return url;
+}
+
+async function extractInstagramMulti(rawUrl: string): Promise<ExtractionResult | null> {
+  const url = await resolveCanonicalUrl(rawUrl);
+
   // Method 1: SaveClip
   try {
     const resp = await axios.post(
@@ -315,7 +344,66 @@ async function extractInstagramMulti(url: string): Promise<ExtractionResult | nu
     }
   } catch (_) {}
 
-  // Method 3: Direct Instagram GraphQL Public endpoint
+  // Method 3: SaveIG API
+  try {
+    const params = new URLSearchParams();
+    params.append('q', url);
+    params.append('t', 'media');
+    params.append('lang', 'en');
+
+    const resp = await axios.post('https://saveig.app/api/ajaxSearch', params, {
+      timeout: 4500,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    if (resp.status === 200 && resp.data?.data) {
+      const html = resp.data.data;
+      const match = html.match(/href="([^"]+)"[^>]*download/i) ||
+                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+      if (match && match[1]) {
+        return {
+          success: true,
+          direct_url: match[1].replace(/&amp;/g, '&'),
+          title: `Instagram_Media_${Date.now()}`,
+          format: 'mp4',
+          provider: 'SaveIG Engine 📸',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 4: Instagram Embed Scraper
+  try {
+    const shortcodeMatch = url.match(/instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)/i);
+    if (shortcodeMatch && shortcodeMatch[1]) {
+      const embedUrl = `https://www.instagram.com/p/${shortcodeMatch[1]}/embed/captioned/`;
+      const resp = await axios.get(embedUrl, {
+        timeout: 4500,
+        headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15' },
+      });
+
+      if (resp.status === 200 && resp.data) {
+        const body = String(resp.data);
+        const match = body.match(/"video_url":"([^"]+)"/i) || body.match(/src="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+        if (match && match[1]) {
+          const streamUrl = match[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/\\/g, '');
+          return {
+            success: true,
+            direct_url: streamUrl,
+            title: `Instagram_Reel_${Date.now()}`,
+            format: 'mp4',
+            provider: 'Instagram Embed Stream ⚡',
+          };
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Method 5: Direct Instagram GraphQL Public endpoint
   try {
     let cleanIgUrl = url.split('?')[0];
     if (!cleanIgUrl.endsWith('/')) cleanIgUrl += '/';
@@ -349,7 +437,9 @@ async function extractInstagramMulti(url: string): Promise<ExtractionResult | nu
   return null;
 }
 
-async function extractFacebookMulti(url: string): Promise<ExtractionResult | null> {
+async function extractFacebookMulti(rawUrl: string): Promise<ExtractionResult | null> {
+  const url = await resolveCanonicalUrl(rawUrl);
+
   // Method 1: SnapSave / FBDownloader API
   try {
     const params = new URLSearchParams();
@@ -381,7 +471,39 @@ async function extractFacebookMulti(url: string): Promise<ExtractionResult | nul
     }
   } catch (_) {}
 
-  // Method 2: FDown / Getfvid Parser
+  // Method 2: FBDownloader Ajax API
+  try {
+    const params = new URLSearchParams();
+    params.append('q', url);
+    params.append('t', 'media');
+    params.append('lang', 'en');
+
+    const resp = await axios.post('https://fbdownloader.to/api/ajaxSearch', params, {
+      timeout: 4500,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    if (resp.status === 200 && resp.data?.data) {
+      const html = String(resp.data.data);
+      const match = html.match(/href="([^"]+)"[^>]*class="button[^"]*is-success/i) ||
+                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+      if (match && match[1]) {
+        return {
+          success: true,
+          direct_url: match[1].replace(/&amp;/g, '&'),
+          title: `Facebook_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'FBDownloader Engine ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 3: FDown / Getfvid Parser
   try {
     const params = new URLSearchParams();
     params.append('url', url);
@@ -412,9 +534,39 @@ async function extractFacebookMulti(url: string): Promise<ExtractionResult | nul
     }
   } catch (_) {}
 
-  // Method 3: FB Video HTML scraper
+  // Method 4: GetFVid Parser
   try {
-    const resp = await axios.get(url, {
+    const params = new URLSearchParams();
+    params.append('url', url);
+
+    const resp = await axios.post('https://www.getfvid.com/downloader', params, {
+      timeout: 4500,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const html = resp.data.toString();
+      const hdMatch = html.match(/href="([^"]+)"[^>]*class="btn btn-download[^"]*"/i) ||
+                      html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+      if (hdMatch && hdMatch[1]) {
+        return {
+          success: true,
+          direct_url: hdMatch[1].replace(/&amp;/g, '&'),
+          title: `Facebook_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'GetFVid Facebook Engine ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 5: FB Video Mobile HTML scraper
+  try {
+    let mobileUrl = url.replace('www.facebook.com', 'm.facebook.com').replace('web.facebook.com', 'm.facebook.com');
+    const resp = await axios.get(mobileUrl, {
       timeout: 4500,
       headers: {
         'User-Agent': MOBILE_UA,
@@ -424,12 +576,12 @@ async function extractFacebookMulti(url: string): Promise<ExtractionResult | nul
 
     if (resp.status === 200 && resp.data) {
       const html = resp.data.toString();
-      const hdMatch = html.match(/"playable_url_quality_hd":"([^"]+)"/i);
-      const sdMatch = html.match(/"playable_url":"([^"]+)"/i);
+      const hdMatch = html.match(/"playable_url_quality_hd":"([^"]+)"/i) || html.match(/"browser_native_hd_url":"([^"]+)"/i);
+      const sdMatch = html.match(/"playable_url":"([^"]+)"/i) || html.match(/"browser_native_sd_url":"([^"]+)"/i) || html.match(/"sd_src":"([^"]+)"/i);
       let streamUrl = hdMatch?.[1] || sdMatch?.[1];
 
       if (streamUrl) {
-        streamUrl = decodeURIComponent(JSON.parse(`"${streamUrl}"`));
+        streamUrl = streamUrl.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/\\/g, '');
         return {
           success: true,
           direct_url: streamUrl,

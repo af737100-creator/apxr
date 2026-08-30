@@ -72,32 +72,51 @@ class DualCloudExtractor {
       return DualExtractionResult.failed(errorMessage: 'رابط الوسائط فارغ');
     }
 
-    debugPrint('[DualCloudExtractor] 🚀 Starting 10-Engine Parallel Race for: $cleanUrl');
+    // 0. Resolve shortlinks / share redirects (e.g. fb.watch, facebook.com/share/r/, instagram.com/share/)
+    final canonicalUrl = await _resolveCanonicalUrl(cleanUrl);
+    final targetUrl = canonicalUrl.isNotEmpty ? canonicalUrl : cleanUrl;
+
+    debugPrint('[DualCloudExtractor] 🚀 Starting Parallel Race for: $targetUrl (Original: $cleanUrl)');
 
     // Build the master parallel racers list
     final List<Future<DualExtractionResult?>> masterRacers = [
-      _tryLocalServerProxy(cleanUrl),
-      _trySaveTubeDirect(cleanUrl),
-      _tryTikWMDirect(cleanUrl),
-      _tryInstagramSaveClip(cleanUrl),
-      _tryInstagramFastDL(cleanUrl),
-      _tryFacebookSnapSave(cleanUrl),
-      _tryFacebookFDown(cleanUrl),
-      _tryInvidiousDirect(cleanUrl),
-      _tryPipedDirect(cleanUrl),
-      _tryYt1s(cleanUrl),
-      _tryY2Mate(cleanUrl),
-      _tryLoaderTo(cleanUrl),
-      _tryPrimaryRailway(cleanUrl),
+      _tryLocalServerProxy(targetUrl),
+      _trySaveTubeDirect(targetUrl),
+      _tryTikWMDirect(targetUrl),
+      _tryInstagramSaveClip(targetUrl),
+      _tryInstagramFastDL(targetUrl),
+      _tryInstagramSaveIG(targetUrl),
+      _tryInstagramEmbed(targetUrl),
+      _tryInstagramGraphQL(targetUrl),
+      _tryFacebookSnapSave(targetUrl),
+      _tryFacebookFDown(targetUrl),
+      _tryFacebookFBDownloader(targetUrl),
+      _tryFacebookGetFVid(targetUrl),
+      _tryFacebookMobileHTML(targetUrl),
+      _tryInvidiousDirect(targetUrl),
+      _tryPipedDirect(targetUrl),
+      _tryYt1s(targetUrl),
+      _tryY2Mate(targetUrl),
+      _tryLoaderTo(targetUrl),
+      _tryPrimaryRailway(targetUrl),
     ];
+
+    if (cleanUrl != targetUrl) {
+      masterRacers.add(_tryLocalServerProxy(cleanUrl));
+      masterRacers.add(_tryFacebookSnapSave(cleanUrl));
+      masterRacers.add(_tryInstagramSaveClip(cleanUrl));
+    }
 
     // Add Cobalt pool
     for (final host in cobaltInstances) {
-      masterRacers.add(_tryCobaltV10Instance(cleanUrl, host));
+      masterRacers.add(_tryCobaltV10Instance(targetUrl, host));
+      if (cleanUrl != targetUrl) {
+        masterRacers.add(_tryCobaltV10Instance(cleanUrl, host));
+      }
     }
 
     try {
-      final winner = await _raceFirstSuccessful(masterRacers, timeout: const Duration(seconds: 10));
+      final winner = await _raceFirstSuccessful(masterRacers, timeout: const Duration(seconds: 12));
       if (winner != null && winner.success && winner.directUrl != null && winner.directUrl!.isNotEmpty) {
         debugPrint('[DualCloudExtractor] 🏆 WINNER: ${winner.providerUsed} -> ${winner.directUrl}');
         return winner;
@@ -106,10 +125,43 @@ class DualCloudExtractor {
       debugPrint('[DualCloudExtractor] Race exception: $e');
     }
 
-    debugPrint('[DualCloudExtractor] ❌ All extraction servers failed for: $cleanUrl');
+    debugPrint('[DualCloudExtractor] ❌ All extraction servers failed for: $targetUrl');
     return DualExtractionResult.failed(
       errorMessage: 'تعذر استخراج الرابط المباشر من السيرفرات السحابية. يرجى استخدام المتصفح المدمج 🌐 لتشغيله وتحميله.',
     );
+  }
+
+  /// Automatically resolves shortlinks & redirects (fb.watch, facebook.com/share, instagram.com/share, etc.)
+  static Future<String> _resolveCanonicalUrl(String url) async {
+    final lower = url.toLowerCase();
+    final isShortLink = lower.contains('fb.watch') ||
+        lower.contains('facebook.com/share/') ||
+        lower.contains('instagram.com/share/') ||
+        lower.contains('vm.tiktok.com') ||
+        lower.contains('vt.tiktok.com') ||
+        lower.contains('youtu.be/') ||
+        lower.contains('t.co/') ||
+        lower.contains('bit.ly/');
+
+    if (!isShortLink) return url;
+
+    try {
+      final client = HttpClient();
+      client.connectionTimeout = const Duration(seconds: 3);
+      final request = await client.getUrl(Uri.parse(url));
+      request.followRedirects = false;
+      final response = await request.close();
+
+      if (response.isRedirect) {
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        if (location != null && location.isNotEmpty) {
+          debugPrint('[DualCloudExtractor] 🔗 Unshortened redirect: $url -> $location');
+          return location;
+        }
+      }
+    } catch (_) {}
+
+    return url;
   }
 
   /// Races multiple futures and returns the FIRST ONE that resolves to a non-null successful result
@@ -355,6 +407,130 @@ class DualCloudExtractor {
     }
   }
 
+  /// 5b. Direct Instagram SaveIG Engine
+  static Future<DualExtractionResult?> _tryInstagramSaveIG(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('instagram.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://saveig.app/api/ajaxSearch'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: {'q': videoUrl, 't': 'media', 'lang': 'en'},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['data'] != null) {
+          final html = data['data'].toString();
+          final match = RegExp(r'href="([^"]+)"[^>]*download').firstMatch(html) ??
+              RegExp(r'href="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(html);
+          if (match != null && match.group(1) != null) {
+            return DualExtractionResult.successful(
+              directUrl: match.group(1)!.replaceAll('&amp;', '&'),
+              title: 'Instagram_Media_${DateTime.now().millisecondsSinceEpoch}',
+              format: 'mp4',
+              providerUsed: 'سيرفر SaveIG Instagram 📸',
+            );
+          }
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 5c. Direct Instagram Embed HTML Scraper
+  static Future<DualExtractionResult?> _tryInstagramEmbed(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('instagram.com')) return null;
+
+    // Extract shortcode from /p/XYZ/ or /reel/XYZ/ or /reels/XYZ/
+    final match = RegExp(r'instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)').firstMatch(videoUrl);
+    final shortcode = match?.group(1);
+    if (shortcode == null) return null;
+
+    final client = http.Client();
+    try {
+      final embedUri = Uri.parse('https://www.instagram.com/p/$shortcode/embed/captioned/');
+      final res = await client.get(
+        embedUri,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes);
+        final videoUrlMatch = RegExp(r'"video_url":"([^"]+)"').firstMatch(body) ??
+            RegExp(r'src="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(body);
+        if (videoUrlMatch != null && videoUrlMatch.group(1) != null) {
+          var streamUrl = videoUrlMatch.group(1)!.replaceAll(r'\u0026', '&').replaceAll(r'\/', '/').replaceAll(r'\', '');
+          return DualExtractionResult.successful(
+            directUrl: streamUrl,
+            title: 'Instagram_Reel_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'مستخرج Instagram Direct Embed ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 5d. Direct Instagram GraphQL Public API
+  static Future<DualExtractionResult?> _tryInstagramGraphQL(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('instagram.com')) return null;
+
+    final match = RegExp(r'instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)').firstMatch(videoUrl);
+    final shortcode = match?.group(1);
+    if (shortcode == null) return null;
+
+    final client = http.Client();
+    try {
+      final jsonUri = Uri.parse('https://www.instagram.com/graphql/query/?query_hash=b3055c2e470ed3d87ba33cbe268db881&variables=${Uri.encodeComponent('{"shortcode":"$shortcode"}')}');
+      final res = await client.get(
+        jsonUri,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Accept': 'application/json',
+        },
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final media = data['data']?['shortcode_media'];
+        if (media != null && media['video_url'] != null) {
+          return DualExtractionResult.successful(
+            directUrl: media['video_url'].toString(),
+            title: 'Instagram_Media_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'شبكة Instagram GraphQL ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
   /// 6. Direct Facebook SnapSave Engine
   static Future<DualExtractionResult?> _tryFacebookSnapSave(String videoUrl) async {
     final lower = videoUrl.toLowerCase();
@@ -422,6 +598,128 @@ class DualCloudExtractor {
             title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
             format: 'mp4',
             providerUsed: 'سيرفر FDown Facebook ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 7b. Direct Facebook FBDownloader Engine
+  static Future<DualExtractionResult?> _tryFacebookFBDownloader(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('facebook.com') && !lower.contains('fb.watch') && !lower.contains('fb.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://fbdownloader.to/api/ajaxSearch'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: {'q': videoUrl, 't': 'media', 'lang': 'en'},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['data'] != null) {
+          final html = data['data'].toString();
+          final match = RegExp(r'href="([^"]+)"[^>]*class="button[^"]*is-success').firstMatch(html) ??
+              RegExp(r'href="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(html);
+          if (match != null && match.group(1) != null) {
+            return DualExtractionResult.successful(
+              directUrl: match.group(1)!.replaceAll('&amp;', '&'),
+              title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
+              format: 'mp4',
+              providerUsed: 'سيرفر FBDownloader HD ⚡',
+            );
+          }
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 7c. Direct Facebook GetFVid Engine
+  static Future<DualExtractionResult?> _tryFacebookGetFVid(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('facebook.com') && !lower.contains('fb.watch') && !lower.contains('fb.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://www.getfvid.com/downloader'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {'url': videoUrl},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final html = utf8.decode(res.bodyBytes);
+        final hdMatch = RegExp(r'href="([^"]+)"[^>]*class="btn btn-download[^"]*"').firstMatch(html) ??
+            RegExp(r'href="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(html);
+        if (hdMatch != null && hdMatch.group(1) != null) {
+          return DualExtractionResult.successful(
+            directUrl: hdMatch.group(1)!.replaceAll('&amp;', '&'),
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'سيرفر GetFVid Facebook ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 7d. Direct Facebook Mobile HTML Scraper
+  static Future<DualExtractionResult?> _tryFacebookMobileHTML(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('facebook.com') && !lower.contains('fb.watch') && !lower.contains('fb.com')) return null;
+
+    final client = http.Client();
+    try {
+      var mobileUrl = videoUrl.replaceFirst('www.facebook.com', 'm.facebook.com').replaceFirst('web.facebook.com', 'm.facebook.com');
+      final res = await client.get(
+        Uri.parse(mobileUrl),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 13; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes, allowMalformed: true);
+        final hdMatch = RegExp(r'"playable_url_quality_hd":"([^"]+)"').firstMatch(body) ??
+            RegExp(r'"browser_native_hd_url":"([^"]+)"').firstMatch(body);
+        final sdMatch = RegExp(r'"playable_url":"([^"]+)"').firstMatch(body) ??
+            RegExp(r'"browser_native_sd_url":"([^"]+)"').firstMatch(body) ??
+            RegExp(r'"sd_src":"([^"]+)"').firstMatch(body) ??
+            RegExp(r'"hd_src":"([^"]+)"').firstMatch(body);
+
+        var streamUrl = hdMatch?.group(1) ?? sdMatch?.group(1);
+        if (streamUrl != null) {
+          streamUrl = streamUrl.replaceAll(r'\/', '/').replaceAll(r'\u0026', '&').replaceAll(r'\', '');
+          return DualExtractionResult.successful(
+            directUrl: streamUrl,
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'مستخرج Facebook Native CDN ⚡',
           );
         }
       }

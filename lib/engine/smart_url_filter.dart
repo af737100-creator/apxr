@@ -114,14 +114,31 @@ class SmartUrlFilter {
       final uri = Uri.parse(cleanUrl);
       final host = uri.host.toLowerCase();
       final path = uri.path.toLowerCase();
+      final fullUrl = uri.toString().toLowerCase();
 
       // Known landing page patterns (DO NOT treat the HTML landing page as the download)
-      if (host.contains('mediafire.com') && path.endsWith('/file')) {
-        return false;
+      if (host.contains('mediafire.com') && (path.endsWith('/file') || path.contains('/file/'))) {
+        // Mediafire file preview page vs direct storage CDN
+        if (!host.contains('download') && !host.startsWith('d-') && !path.contains('/download/')) {
+          return false;
+        }
       }
       if (host.contains('github.com') && (path.contains('/releases/tag/') || path.contains('/tree/'))) {
         return false;
       }
+      
+      // Direct APK / XAPK CDN endpoints (APKPure, Uptodown, APKMirror, APKCombo)
+      if (host.contains('d.apkpure.net') ||
+          host.contains('d.apkpure.com') ||
+          host.contains('download.apkpure.com') ||
+          (host.contains('apkpure') && (path.contains('/b/apk/') || path.contains('/b/xapk/'))) ||
+          host.contains('dw.uptodown.com') ||
+          (host.contains('uptodown.com') && path.contains('/dwn/')) ||
+          (host.contains('apkmirror.com') && path.contains('download.php')) ||
+          host.contains('objects.githubusercontent.com')) {
+        return true;
+      }
+
       if ((host.contains('apkpure') || host.contains('apkmirror') || host.contains('uptodown')) &&
           !path.endsWith('.apk') &&
           !path.endsWith('.xapk') &&
@@ -141,16 +158,16 @@ class SmartUrlFilter {
 
       // Check if path directly ends with known extension
       for (final ext in downloadableExtensions) {
-        if (path.endsWith('.$ext')) return true;
+        if (path.endsWith('.$ext') || path.contains('.$ext?') || path.contains('.$ext/')) return true;
       }
 
       // Direct file CDNs
       if (host.startsWith('download.') ||
           host.startsWith('d.') ||
           host.contains('objects.githubusercontent.com') ||
-          host.contains('apkpure.net') && path.contains('.apk')) {
+          (host.contains('apkpure.net') && (path.contains('.apk') || path.contains('/apk/')))) {
         for (final ext in downloadableExtensions) {
-          if (path.contains('.$ext')) return true;
+          if (path.contains('.$ext') || fullUrl.contains('=$ext') || fullUrl.contains('/$ext/')) return true;
         }
       }
 
@@ -164,16 +181,24 @@ class SmartUrlFilter {
   static String? inferFileExtension(String rawUrl) {
     try {
       final uri = Uri.parse(rawUrl);
+      final host = uri.host.toLowerCase();
       final path = uri.path.toLowerCase();
+      final fullUrl = uri.toString().toLowerCase();
+
+      if (host.contains('apkpure') || host.contains('apkmirror') || host.contains('uptodown')) {
+        if (path.contains('/xapk') || fullUrl.contains('xapk')) return 'xapk';
+        return 'apk';
+      }
+
       for (final ext in downloadableExtensions) {
-        if (path.endsWith('.$ext') || path.contains('.$ext?')) {
+        if (path.endsWith('.$ext') || path.contains('.$ext?') || path.contains('.$ext/')) {
           return ext;
         }
       }
       if (uri.pathSegments.isNotEmpty) {
         final last = uri.pathSegments.last;
         if (last.contains('.')) {
-          final ext = last.split('.').last.toLowerCase();
+          final ext = last.split('.').last.split('?').first.toLowerCase();
           if (downloadableExtensions.contains(ext)) return ext;
         }
       }

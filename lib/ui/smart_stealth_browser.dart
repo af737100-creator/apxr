@@ -155,28 +155,57 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
         if (window.__hyperpulse_injected) return;
         window.__hyperpulse_injected = true;
 
+        function isPromoStoreLink(href) {
+          if (!href) return false;
+          var lower = href.toLowerCase();
+          return lower.includes('apkpure-app') ||
+                 lower.includes('com.apkpure.aegon') ||
+                 lower.includes('uptodown-app') ||
+                 lower.includes('from=banner') ||
+                 lower.includes('from=popup_app') ||
+                 lower.includes('from=app_detail_install');
+        }
+
         function findDownloadLink(element) {
           if (!element) return null;
+          
           // Check data-url attribute (common in Uptodown / APKPure)
           var dataUrl = element.getAttribute('data-url') || element.getAttribute('data-href');
-          if (dataUrl && dataUrl.startsWith('http')) return dataUrl;
+          if (dataUrl && dataUrl.startsWith('http') && !isPromoStoreLink(dataUrl)) return dataUrl;
 
-          var href = element.getAttribute('href');
-          if (href && (
-            href.match(/\\.(apk|xapk|zip|rar|7z|mp4|mkv|mp3|pdf|iso|exe|tar|gz)(\\?|\$)/i) ||
-            href.includes('mediafire.com/download') ||
-            href.includes('mediafire.com/file/') ||
-            href.includes('objects.githubusercontent.com') ||
-            href.includes('download.uptodown.com') ||
-            href.includes('dw.uptodown.com') ||
-            href.includes('/post-download/') ||
-            href.includes('/download/apk')
-          )) {
-            return href;
+          var href = element.getAttribute('href') || element.getAttribute('src');
+          if (href && !isPromoStoreLink(href)) {
+            if (
+              href.match(/\\.(apk|xapk|zip|rar|7z|mp4|mkv|mp3|pdf|iso|exe|tar|gz)(\\?|\$)/i) ||
+              href.includes('/b/APK/') ||
+              href.includes('/b/XAPK/') ||
+              href.includes('d.apkpure.net') ||
+              href.includes('d.apkpure.com') ||
+              href.includes('download.apkpure.com') ||
+              href.includes('mediafire.com/download') ||
+              href.includes('mediafire.com/file/') ||
+              href.includes('objects.githubusercontent.com') ||
+              href.includes('download.uptodown.com') ||
+              href.includes('dw.uptodown.com') ||
+              href.includes('/dwn/') ||
+              href.includes('/post-download/') ||
+              href.includes('/download/apk') ||
+              href.includes('download.php')
+            ) {
+              return href;
+            }
           }
+
+          // Check if element is the APKPure "Click here" link
+          if (element.id === 'download_link' || (element.textContent && element.textContent.toLowerCase().includes('click here'))) {
+            var dl = element.getAttribute('href');
+            if (dl && dl.startsWith('http') && !isPromoStoreLink(dl)) return dl;
+          }
+
           return null;
         }
 
+        // Global click listener to intercept direct APK & file downloads
         document.addEventListener('click', function(e) {
           var target = e.target;
           while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
@@ -189,6 +218,22 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
             }
           }
         }, true);
+
+        // Auto-sniff APKPure / Uptodown automatic download redirection
+        function checkAutoDownloadLink() {
+          var apkPureLink = document.querySelector('#download_link, a[href*="/b/APK/"], a[href*="/b/XAPK/"], a[href*="d.apkpure.net"]');
+          if (apkPureLink) {
+            var dlUrl = apkPureLink.getAttribute('href');
+            if (dlUrl && dlUrl.startsWith('http') && !isPromoStoreLink(dlUrl) && window.HyperPulseDownloader) {
+              // Automatically trigger target APK download
+              window.HyperPulseDownloader.postMessage(dlUrl);
+              return;
+            }
+          }
+        }
+
+        setTimeout(checkAutoDownloadLink, 1200);
+        setTimeout(checkAutoDownloadLink, 2500);
       })();
     ''';
     _webViewController.runJavaScript(script).catchError((_) {});
@@ -202,40 +247,61 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       return;
     }
 
-    // 2. Try extracting direct binary download URL from the page DOM (Uptodown, Mediafire, APKPure, GitHub, etc.)
+    // 2. Try extracting direct binary download URL from the page DOM (APKPure, Uptodown, Mediafire, GitHub, etc.)
     try {
       final jsResult = await _webViewController.runJavaScriptReturningResult('''
         (function() {
-          // Check for Uptodown direct download button
-          var uptodownBtn = document.querySelector('#detail-download-button, a[data-url*="uptodown"], a.button.download');
-          if (uptodownBtn) {
-            var uUrl = uptodownBtn.getAttribute('data-url') || uptodownBtn.getAttribute('href');
-            if (uUrl && uUrl.startsWith('http')) return uUrl;
+          function isPromo(url) {
+            if (!url) return true;
+            var l = url.toLowerCase();
+            return l.includes('apkpure-app') || l.includes('com.apkpure.aegon') || l.includes('uptodown-app');
           }
 
-          // Check for MediaFire download button
+          // 1. Check for APKPure direct app download link (Target APK, not the store app)
+          var apkPureBtn = document.querySelector('#download_link, a[href*="/b/APK/"], a[href*="/b/XAPK/"], a[href*="d.apkpure.net"], a[href*="download.apkpure.com"]');
+          if (apkPureBtn) {
+            var apkUrl = apkPureBtn.getAttribute('href');
+            if (apkUrl && apkUrl.startsWith('http') && !isPromo(apkUrl)) return apkUrl;
+          }
+
+          // 2. Check for Uptodown direct download button
+          var uptodownBtn = document.querySelector('#detail-download-button, a[data-url*="uptodown"], a[href*="dw.uptodown.com"], a[href*="/dwn/"]');
+          if (uptodownBtn) {
+            var uUrl = uptodownBtn.getAttribute('data-url') || uptodownBtn.getAttribute('href');
+            if (uUrl && uUrl.startsWith('http') && !isPromo(uUrl)) return uUrl;
+          }
+
+          // 3. Check for MediaFire download button
           var mfBtn = document.querySelector('#downloadButton, a[aria-label="Download file"], .download_link a');
           if (mfBtn && mfBtn.href && mfBtn.href.startsWith('http')) {
             return mfBtn.href;
           }
 
-          // Check for standard APK / Media links on page
-          var links = document.querySelectorAll('a[href*=".apk"], a[href*=".zip"], a[href*=".mp4"], a[href*="download"]');
+          // 4. Check for GitHub release download asset
+          var ghAsset = document.querySelector('a[href*="/releases/download/"]');
+          if (ghAsset && ghAsset.href && ghAsset.href.startsWith('http')) {
+            return ghAsset.href;
+          }
+
+          // 5. Scan all download links on page, filtering out promo store links
+          var links = document.querySelectorAll('a[href*=".apk"], a[href*=".xapk"], a[href*=".zip"], a[href*=".mp4"], a[href*="download"]');
           for (var i = 0; i < links.length; i++) {
             var h = links[i].href;
-            if (h && (h.includes('.apk') || h.includes('.zip') || h.includes('.mp4') || h.includes('uptodown.com/dwn/'))) {
-              return h;
+            if (h && h.startsWith('http') && !isPromo(h)) {
+              if (h.includes('.apk') || h.includes('.xapk') || h.includes('.zip') || h.includes('.mp4') || h.includes('/b/APK/') || h.includes('/b/XAPK/') || h.includes('uptodown.com/dwn/')) {
+                return h;
+              }
             }
           }
 
-          // Check for HTML5 video sources
+          // 6. Check for HTML5 video sources
           var vid = document.querySelector('video source, video');
           if (vid && vid.src && vid.src.startsWith('http')) {
             return vid.src;
           }
 
-          // If no direct link extracted, trigger click on primary download button on the page
-          var primaryBtn = document.querySelector('#detail-download-button, #downloadButton, a.button.download, button[type="submit"]');
+          // 7. If on download page, trigger click on target download button
+          var primaryBtn = document.querySelector('#download_link, #detail-download-button, #downloadButton, a.button.download');
           if (primaryBtn) {
             primaryBtn.click();
             return 'CLICKED_PAGE_BUTTON';
@@ -250,7 +316,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('⚡ جاري بدء التحميل عبر الزر الرئيسي في الصفحة...'),
+              content: Text('⚡ جاري بدء التحميل واستخراج حزمة التطبيق المباشرة...'),
               backgroundColor: Color(0xFF1F1D24),
               duration: Duration(seconds: 2),
             ),
@@ -274,7 +340,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('اضغط على زر التنزيل داخل الصفحة لتحميل الملف الحقيقي'),
+            content: Text('اضغط على رابط التحميل أو "Click here" لبدء تنزيل ملف التطبيق فوراً'),
             backgroundColor: Color(0xFFEAB308),
             duration: Duration(seconds: 3),
           ),
