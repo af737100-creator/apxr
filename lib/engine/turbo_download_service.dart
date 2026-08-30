@@ -244,17 +244,35 @@ class TurboDownloadService {
           forceSingleStream: forceSingleStream,
         );
 
-        // Zero-Byte & Magic Bytes Inspection on the completed part file
+        final tempFile = File(task.tempFilePath);
+        final finalFile = File(task.fullFilePath);
+
+        // Determine actual downloaded file location on disk
+        String inspectPath = task.fullFilePath;
+        if (await tempFile.exists()) {
+          inspectPath = task.tempFilePath;
+        } else if (await finalFile.exists()) {
+          inspectPath = task.fullFilePath;
+        } else {
+          debugPrint('[TurboDownloadService] ⚠️ Neither temp file nor final file exists on disk!');
+          if (attempts >= maxZeroByteRetries) {
+            throw Exception('الملف غير موجود على القرص (File does not exist).');
+          }
+          await Future.delayed(const Duration(seconds: 1));
+          continue;
+        }
+
+        // Zero-Byte & Magic Bytes Inspection on the completed file
         final integrity = await ZeroByteShieldEngine.inspectFile(
-          filePath: task.tempFilePath,
+          filePath: inspectPath,
           expectedExtension: task.fileExtension,
         );
 
         if (!integrity.isValid) {
           debugPrint('[TurboDownloadService] ⚠️ Integrity rejected: ${integrity.rejectionReason}. Attempt $attempts of $maxZeroByteRetries.');
           try {
-            final f = File(task.tempFilePath);
-            if (await f.exists()) await f.delete();
+            if (await tempFile.exists()) await tempFile.delete();
+            if (await finalFile.exists()) await finalFile.delete();
           } catch (_) {}
 
           if (attempts >= maxZeroByteRetries) {
@@ -264,15 +282,13 @@ class TurboDownloadService {
           continue;
         }
 
-        // Atomically rename verified part file to final destination file
-        final tempFile = File(task.tempFilePath);
-        final finalFile = File(task.fullFilePath);
-        if (await finalFile.exists()) {
-          try {
-            await finalFile.delete();
-          } catch (_) {}
-        }
+        // Atomically rename/copy verified part file to final destination file if still in temp
         if (await tempFile.exists()) {
+          if (await finalFile.exists()) {
+            try {
+              await finalFile.delete();
+            } catch (_) {}
+          }
           try {
             await tempFile.rename(task.fullFilePath);
           } catch (_) {
@@ -283,6 +299,10 @@ class TurboDownloadService {
             } catch (_) {}
           }
         }
+
+        // Update task status and finished time
+        task.status = DownloadStatus.completed;
+        task.finishedAt = DateTime.now();
 
         // Clean up checkpoint on success
         await SmartResumeManager.deleteCheckpoint(task.tempFilePath);
@@ -299,6 +319,24 @@ class TurboDownloadService {
             await AndroidSystemBridge.installApk(task.fullFilePath);
           } catch (_) {}
         }
+
+        // Dispatch final 100% completion progress event
+        _progressController.add(
+          TurboProgressEvent(
+            taskId: task.id,
+            totalBytes: task.downloadedBytes > 0 ? task.downloadedBytes : task.totalSizeBytes,
+            downloadedBytes: task.downloadedBytes > 0 ? task.downloadedBytes : task.totalSizeBytes,
+            speedBytesPerSec: 0,
+            progressPercent: 1.0,
+            segments: List.from(task.segments),
+            bufferedRamMb: 0.0,
+            isSingleStream: forceSingleStream,
+            statusText: task.isApk
+                ? '✅ اكتمل تحميل تطبيق APK وجاري الفتح والتثبيت...'
+                : (task.isVideo ? '🎬 اكتمل التحميل وحفظ الفيديو في المعرض بنجاح!' : '✅ اكتمل التحميل وحفظ الملف بنجاح!'),
+            activeThreads: task.threadCount,
+          ),
+        );
 
         return; // Success!
       } catch (e) {
@@ -471,45 +509,7 @@ class TurboDownloadService {
         await sink.close();
       }
 
-      // Finalize file: move part to destination and scan to gallery
-      final finalFile = File(task.fullFilePath);
-      if (await finalFile.exists()) {
-        try {
-          await finalFile.delete();
-        } catch (_) {}
-      }
-      if (await targetFile.exists()) {
-        try {
-          await targetFile.rename(task.fullFilePath);
-        } catch (_) {
-          await targetFile.copy(task.fullFilePath);
-          try {
-            await targetFile.delete();
-          } catch (_) {}
-        }
-      }
-      try {
-        await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
-      } catch (_) {}
-
       singleSegment.status = ChunkStatus.completed;
-      task.status = DownloadStatus.completed;
-      task.finishedAt = DateTime.now();
-
-      _progressController.add(
-        TurboProgressEvent(
-          taskId: task.id,
-          totalBytes: task.downloadedBytes,
-          downloadedBytes: task.downloadedBytes,
-          speedBytesPerSec: 0,
-          progressPercent: 1.0,
-          segments: [singleSegment],
-          bufferedRamMb: 0.0,
-          isSingleStream: false,
-          statusText: '⚡ اكتمل التحميل وحفظ الفيديو في المعرض بنجاح!',
-          activeThreads: 4,
-        ),
-      );
     } finally {
       yt.close();
     }
@@ -641,45 +641,7 @@ class TurboDownloadService {
       await sink.close();
     }
 
-    // Finalize file: move part to destination and scan to gallery
-    final finalFile = File(task.fullFilePath);
-    if (await finalFile.exists()) {
-      try {
-        await finalFile.delete();
-      } catch (_) {}
-    }
-    if (await targetFile.exists()) {
-      try {
-        await targetFile.rename(task.fullFilePath);
-      } catch (_) {
-        await targetFile.copy(task.fullFilePath);
-        try {
-          await targetFile.delete();
-        } catch (_) {}
-      }
-    }
-    try {
-      await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
-    } catch (_) {}
-
     singleSegment.status = ChunkStatus.completed;
-    task.status = DownloadStatus.completed;
-    task.finishedAt = DateTime.now();
-
-    _progressController.add(
-      TurboProgressEvent(
-        taskId: task.id,
-        totalBytes: task.downloadedBytes,
-        downloadedBytes: task.downloadedBytes,
-        speedBytesPerSec: 0,
-        progressPercent: 1.0,
-        segments: [singleSegment],
-        bufferedRamMb: 0.0,
-        isSingleStream: true,
-        statusText: 'اكتمل التحميل وحفظ الفيديو في المعرض بنجاح!',
-        activeThreads: 1,
-      ),
-    );
   }
 
   /// [32-Isolate Parallel Turbo Download with Smart Resume Checkpoint & Dual Network Support]

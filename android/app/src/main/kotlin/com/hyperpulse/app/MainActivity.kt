@@ -1,6 +1,7 @@
 package com.hyperpulse.app
 
 import android.content.BroadcastReceiver
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -8,7 +9,9 @@ import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.annotation.NonNull
 import androidx.core.app.NotificationManagerCompat
@@ -168,7 +171,7 @@ class MainActivity : FlutterActivity() {
     private fun scanFileForGallery(filePath: String) {
         try {
             val file = File(filePath)
-            if (file.exists()) {
+            if (file.exists() && file.length() > 0) {
                 val lower = filePath.lowercase()
                 val mimeType = when {
                     lower.endsWith(".mp4") -> "video/mp4"
@@ -194,7 +197,7 @@ class MainActivity : FlutterActivity() {
                     arrayOf(file.absolutePath),
                     arrayOf(mimeType)
                 ) { path, uri ->
-                    // Successfully indexed into MediaStore
+                    Log.d("HyperPulse", "MediaScanner indexed: $path -> $uri")
                 }
 
                 // 2. Legacy Broadcast for instant gallery refresh
@@ -203,6 +206,27 @@ class MainActivity : FlutterActivity() {
                     mediaScanIntent.data = Uri.fromFile(file)
                     sendBroadcast(mediaScanIntent)
                 } catch (e: Exception) {}
+
+                // 3. Android 10+ (API 29+) MediaStore indexing fallback
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && (mimeType.startsWith("video/") || mimeType.startsWith("audio/") || mimeType.startsWith("image/"))) {
+                    try {
+                        val contentUri = when {
+                            mimeType.startsWith("video/") -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                            mimeType.startsWith("audio/") -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+                            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                        }
+                        val values = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(MediaStore.MediaColumns.SIZE, file.length())
+                            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000)
+                            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
+                        }
+                        contentResolver.insert(contentUri, values)
+                    } catch (e: Exception) {
+                        Log.d("HyperPulse", "MediaStore insert warning: ${e.message}")
+                    }
+                }
             }
         } catch (e: Exception) {
             e.printStackTrace()
