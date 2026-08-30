@@ -150,6 +150,12 @@ class CloudExtractorService {
     return lower.contains('instagram.com');
   }
 
+  /// Checks if URL is Facebook
+  static bool isFacebookUrl(String rawUrl) {
+    final lower = rawUrl.toLowerCase();
+    return lower.contains('facebook.com') || lower.contains('fb.watch') || lower.contains('fb.com');
+  }
+
   /// Checks if URL is Twitter / X
   static bool isTwitterUrl(String rawUrl) {
     final lower = rawUrl.toLowerCase();
@@ -254,10 +260,14 @@ class CloudExtractorService {
       }
     }
 
-    // 5. ON-DEVICE INSTAGRAM / TWITTER PARSERS
+    // 5. ON-DEVICE INSTAGRAM / FACEBOOK / TWITTER PARSERS
     if (isInstagramUrl(cleanUrl)) {
       final igRes = await _extractInstagramDirect(cleanUrl);
       if (igRes != null && igRes.success) return igRes;
+    }
+    if (isFacebookUrl(cleanUrl)) {
+      final fbRes = await _extractFacebookDirect(cleanUrl);
+      if (fbRes != null && fbRes.success) return fbRes;
     }
     if (isTwitterUrl(cleanUrl)) {
       final twRes = await _extractTwitterDirect(cleanUrl);
@@ -844,16 +854,17 @@ class CloudExtractorService {
     return null;
   }
 
-  /// Specialized Instagram API Extractor
+  /// Specialized Instagram API Extractor with Multiple Fallbacks
   Future<CloudExtractedMedia?> _extractInstagramDirect(String igUrl) async {
+    // 1. SaveClip API
     try {
-      // Query SaveClip / Rapid Insta API
       final response = await _dio.post(
         'https://api.saveclip.app/v1/get',
         data: {'url': igUrl},
         options: Options(
           sendTimeout: const Duration(seconds: 4),
           receiveTimeout: const Duration(seconds: 5),
+          headers: {'Accept': 'application/json'},
         ),
       );
 
@@ -880,6 +891,118 @@ class CloudExtractorService {
         }
       }
     } catch (_) {}
+
+    // 2. FastDL API Scraper
+    try {
+      final response = await _dio.post(
+        'https://v3.fastdl.app/api/convert',
+        data: FormData.fromMap({'q': igUrl, 't': 'media', 'lang': 'en'}),
+        options: Options(
+          sendTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 5),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final html = response.data.toString();
+        final match = RegExp(r'href="([^"]+)"[^>]*title="Download Video"').firstMatch(html) ??
+            RegExp(r'href="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(html) ??
+            RegExp(r'class="btn-download[^"]*"[^>]*href="([^"]+)"').firstMatch(html);
+
+        if (match != null && match.group(1) != null) {
+          final directUrl = match.group(1)!.replaceAll('&amp;', '&');
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: igUrl,
+            directStreamUrl: directUrl,
+            title: 'Instagram_Media_${DateTime.now().millisecondsSinceEpoch}.mp4',
+            format: 'mp4',
+            quality: 'HD 1080p',
+            isDirectFallback: false,
+          );
+        }
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  /// Specialized Facebook API Extractor with Multi-Engine Fallback
+  Future<CloudExtractedMedia?> _extractFacebookDirect(String fbUrl) async {
+    // 1. SnapSave API
+    try {
+      final response = await _dio.post(
+        'https://snapsave.app/action.php?lang=en',
+        data: FormData.fromMap({'url': fbUrl}),
+        options: Options(
+          sendTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 5),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final body = response.data.toString();
+        final match = RegExp(r'href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success').firstMatch(body) ??
+            RegExp(r'(https:\/\/[^"\'\\]+\.mp4[^"\'\\]*)').firstMatch(body);
+
+        if (match != null && match.group(1) != null) {
+          final streamUrl = match.group(1)!.replaceAll(r'\', '').replaceAll('&amp;', '&');
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: fbUrl,
+            directStreamUrl: streamUrl,
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+            format: 'mp4',
+            quality: 'HD',
+            isDirectFallback: false,
+          );
+        }
+      }
+    } catch (_) {}
+
+    // 2. FDown API
+    try {
+      final response = await _dio.post(
+        'https://fdown.net/download.php',
+        data: FormData.fromMap({'url': fbUrl}),
+        options: Options(
+          sendTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 5),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        final body = response.data.toString();
+        final hdMatch = RegExp(r'id="hd"[\s\S]*?href="([^"]+)"').firstMatch(body);
+        final sdMatch = RegExp(r'id="sd"[\s\S]*?href="([^"]+)"').firstMatch(body);
+        final streamUrl = hdMatch?.group(1) ?? sdMatch?.group(1);
+
+        if (streamUrl != null && streamUrl.startsWith('http')) {
+          return CloudExtractedMedia(
+            success: true,
+            originalUrl: fbUrl,
+            directStreamUrl: streamUrl.replaceAll('&amp;', '&'),
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+            format: 'mp4',
+            quality: 'HD',
+            isDirectFallback: false,
+          );
+        }
+      }
+    } catch (_) {}
+
     return null;
   }
 

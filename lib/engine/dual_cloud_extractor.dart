@@ -79,6 +79,10 @@ class DualCloudExtractor {
       _tryLocalServerProxy(cleanUrl),
       _trySaveTubeDirect(cleanUrl),
       _tryTikWMDirect(cleanUrl),
+      _tryInstagramSaveClip(cleanUrl),
+      _tryInstagramFastDL(cleanUrl),
+      _tryFacebookSnapSave(cleanUrl),
+      _tryFacebookFDown(cleanUrl),
       _tryInvidiousDirect(cleanUrl),
       _tryPipedDirect(cleanUrl),
       _tryYt1s(cleanUrl),
@@ -270,7 +274,166 @@ class DualCloudExtractor {
     }
   }
 
-  /// 4. Invidious Rotating Engine
+  /// 4. Direct Instagram SaveClip Engine
+  static Future<DualExtractionResult?> _tryInstagramSaveClip(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('instagram.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://api.saveclip.app/v1/get'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'url': videoUrl}),
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
+        if (data is Map && data['data'] is List && (data['data'] as List).isNotEmpty) {
+          final first = (data['data'] as List).first;
+          final streamUrl = first['url'] ?? first['video_url'];
+          if (streamUrl != null && streamUrl.toString().startsWith('http')) {
+            return DualExtractionResult.successful(
+              directUrl: streamUrl.toString(),
+              title: 'Instagram_Reel_${DateTime.now().millisecondsSinceEpoch}',
+              format: 'mp4',
+              providerUsed: 'سيرفر SaveClip Instagram 📸',
+            );
+          }
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 5. Direct Instagram FastDL Scraper Engine
+  static Future<DualExtractionResult?> _tryInstagramFastDL(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('instagram.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://v3.fastdl.app/api/convert'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: {'q': videoUrl, 't': 'media', 'lang': 'en'},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final html = utf8.decode(res.bodyBytes);
+        final match = RegExp(r'href="([^"]+)"[^>]*title="Download Video"').firstMatch(html) ??
+            RegExp(r'href="(https:\/\/[^"]+\.mp4[^"]*)"').firstMatch(html) ??
+            RegExp(r'class="btn-download[^"]*"[^>]*href="([^"]+)"').firstMatch(html);
+
+        if (match != null && match.group(1) != null) {
+          final directUrl = match.group(1)!.replaceAll('&amp;', '&');
+          return DualExtractionResult.successful(
+            directUrl: directUrl,
+            title: 'Instagram_Media_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'سيرفر FastDL Instagram ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 6. Direct Facebook SnapSave Engine
+  static Future<DualExtractionResult?> _tryFacebookSnapSave(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('facebook.com') && !lower.contains('fb.watch') && !lower.contains('fb.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://snapsave.app/action.php?lang=en'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        },
+        body: {'url': videoUrl},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes);
+        final match = RegExp(r'href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success').firstMatch(body) ??
+            RegExp(r'(https:\/\/[^"\'\\]+\.mp4[^"\'\\]*)').firstMatch(body);
+
+        if (match != null && match.group(1) != null) {
+          final streamUrl = match.group(1)!.replaceAll(r'\', '').replaceAll('&amp;', '&');
+          return DualExtractionResult.successful(
+            directUrl: streamUrl,
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'سيرفر SnapSave Facebook HD ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 7. Direct Facebook FDown Engine
+  static Future<DualExtractionResult?> _tryFacebookFDown(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('facebook.com') && !lower.contains('fb.watch') && !lower.contains('fb.com')) return null;
+
+    final client = http.Client();
+    try {
+      final res = await client.post(
+        Uri.parse('https://fdown.net/download.php'),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {'url': videoUrl},
+      ).timeout(quickTimeout);
+
+      if (res.statusCode == 200) {
+        final body = utf8.decode(res.bodyBytes);
+        final hdMatch = RegExp(r'id="hd"[\s\S]*?href="([^"]+)"').firstMatch(body);
+        final sdMatch = RegExp(r'id="sd"[\s\S]*?href="([^"]+)"').firstMatch(body);
+        final streamUrl = hdMatch?.group(1) ?? sdMatch?.group(1);
+
+        if (streamUrl != null && streamUrl.startsWith('http')) {
+          return DualExtractionResult.successful(
+            directUrl: streamUrl.replaceAll('&amp;', '&'),
+            title: 'Facebook_Video_${DateTime.now().millisecondsSinceEpoch}',
+            format: 'mp4',
+            providerUsed: 'سيرفر FDown Facebook ⚡',
+          );
+        }
+      }
+      return null;
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 8. Invidious Rotating Engine
   static Future<DualExtractionResult?> _tryInvidiousDirect(String videoUrl) async {
     final match = RegExp(r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|live\/|watch\?v=|watch\?.+&v=))([\w-]{11})', caseSensitive: false).firstMatch(videoUrl);
     final videoId = match?.group(1);

@@ -106,6 +106,12 @@ class TurboDownloadService {
 
   /// Probes remote file size, redirects (up to 10 hops), and range capabilities
   Future<Map<String, dynamic>> probeRemoteFile(String url, {Map<String, String>? customCookies}) async {
+    int totalBytes = -1;
+    bool supportsRanges = false;
+    String inferredFileName = 'download_file';
+    String contentType = '';
+    Map<String, dynamic> headersMap = {};
+
     try {
       final headers = <String, dynamic>{
         'Accept-Encoding': 'identity',
@@ -114,34 +120,83 @@ class TurboDownloadService {
         headers['Cookie'] = customCookies.entries.map((e) => '${e.key}=${e.value}').join('; ');
       }
 
-      final response = await _dio.head(
-        url,
-        options: Options(
-          followRedirects: true,
-          maxRedirects: 10,
-          validateStatus: (status) => status != null && status < 400,
-          headers: headers,
-        ),
-      );
+      // Step 1: Fast HEAD Request
+      try {
+        final response = await _dio.head(
+          url,
+          options: Options(
+            followRedirects: true,
+            maxRedirects: 10,
+            validateStatus: (status) => status != null && status < 400,
+            headers: headers,
+          ),
+        );
 
-      final respHeaders = response.headers;
-      final contentLengthStr = respHeaders.value('content-length');
-      final acceptRanges = respHeaders.value('accept-ranges');
-      final contentDisposition = respHeaders.value('content-disposition');
-      final contentType = respHeaders.value('content-type')?.toLowerCase() ?? '';
+        final respHeaders = response.headers;
+        headersMap = respHeaders.map;
+        final contentLengthStr = respHeaders.value('content-length');
+        final acceptRanges = respHeaders.value('accept-ranges');
+        final contentDisposition = respHeaders.value('content-disposition');
+        contentType = respHeaders.value('content-type')?.toLowerCase() ?? '';
 
-      final int totalBytes =
-          contentLengthStr != null ? int.tryParse(contentLengthStr) ?? -1 : -1;
-      final bool supportsRanges = (acceptRanges == 'bytes') || (totalBytes > 2 * 1024 * 1024);
-
-      String inferredFileName = 'download_file';
-      if (contentDisposition != null && contentDisposition.contains('filename')) {
-        final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?')
-            .firstMatch(contentDisposition);
-        if (match != null && match.group(1) != null) {
-          inferredFileName = Uri.decodeFull(match.group(1)!.trim());
+        if (contentLengthStr != null) {
+          totalBytes = int.tryParse(contentLengthStr) ?? -1;
         }
-      } else {
+        if (acceptRanges == 'bytes' || (totalBytes > 2 * 1024 * 1024)) {
+          supportsRanges = true;
+        }
+
+        if (contentDisposition != null && contentDisposition.contains('filename')) {
+          final match = RegExp('filename\\*?=(?:UTF-8\'\')?["\']?([^"\';]+)["\']?')
+              .firstMatch(contentDisposition);
+          if (match != null && match.group(1) != null) {
+            inferredFileName = Uri.decodeFull(match.group(1)!.trim());
+          }
+        }
+      } catch (headErr) {
+        debugPrint('[TurboDownloadService] HEAD probe skipped, attempting range probe: $headErr');
+      }
+
+      // Step 2: If HEAD was inconclusive or range wasn't proven, perform 1-byte GET Range probe
+      if (!supportsRanges || totalBytes <= 0) {
+        try {
+          final rangeResponse = await _dio.get<ResponseBody>(
+            url,
+            options: Options(
+              responseType: ResponseType.stream,
+              followRedirects: true,
+              maxRedirects: 10,
+              headers: {
+                ...headers,
+                'Range': 'bytes=0-1',
+                'User-Agent':
+                    'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Mobile Safari/537.36',
+              },
+              validateStatus: (status) => status != null && (status == 200 || status == 206),
+            ),
+          );
+
+          final rHeaders = rangeResponse.headers;
+          if (contentType.isEmpty) {
+            contentType = rHeaders.value('content-type')?.toLowerCase() ?? '';
+          }
+          final contentRange = rHeaders.value('content-range');
+          if (rangeResponse.statusCode == 206 && contentRange != null) {
+            supportsRanges = true;
+            final match = RegExp(r'/(\d+)').firstMatch(contentRange);
+            if (match != null) {
+              totalBytes = int.tryParse(match.group(1)!) ?? totalBytes;
+            }
+          } else if (rangeResponse.statusCode == 200) {
+            final len = rHeaders.value('content-length');
+            if (len != null) {
+              totalBytes = int.tryParse(len) ?? totalBytes;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (inferredFileName == 'download_file') {
         final uri = Uri.parse(url);
         if (uri.pathSegments.isNotEmpty && uri.pathSegments.last.isNotEmpty) {
           inferredFileName = uri.pathSegments.last;
@@ -153,16 +208,16 @@ class TurboDownloadService {
         'supportsRanges': supportsRanges,
         'fileName': inferredFileName,
         'contentType': contentType,
-        'headers': respHeaders.map,
+        'headers': headersMap,
       };
     } catch (e) {
       debugPrint('[TurboDownloadService] Probe warning: $e');
       return {
-        'totalBytes': -1,
-        'supportsRanges': false,
-        'fileName': 'download_file',
-        'contentType': '',
-        'headers': {},
+        'totalBytes': totalBytes,
+        'supportsRanges': supportsRanges,
+        'fileName': inferredFileName,
+        'contentType': contentType,
+        'headers': headersMap,
       };
     }
   }
@@ -232,6 +287,19 @@ class TurboDownloadService {
         // Clean up checkpoint on success
         await SmartResumeManager.deleteCheckpoint(task.tempFilePath);
         await SmartResumeManager.deleteCheckpoint(task.fullFilePath);
+
+        // Immediate Gallery & MediaStore Indexing
+        try {
+          await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
+        } catch (_) {}
+
+        // Instant APK Install trigger for apps
+        if (task.isApk) {
+          try {
+            await AndroidSystemBridge.installApk(task.fullFilePath);
+          } catch (_) {}
+        }
+
         return; // Success!
       } catch (e) {
         if (attempts >= maxZeroByteRetries) {
@@ -268,11 +336,8 @@ class TurboDownloadService {
       }
     }
 
-    final bool isSocial = isSocialMediaStreamUrl(task.sourceUrl);
-
-    // 2. Social video or single stream requested
-    if (forceSingleStream || isSocial) {
-      debugPrint('[TurboDownloadService] ⚡ Activating High-Speed Direct Stream Mode.');
+    if (forceSingleStream) {
+      debugPrint('[TurboDownloadService] ⚡ Forced Single Stream Mode requested.');
       await downloadSingleStream(
         task: task,
         ramBufferThresholdMb: ramBufferThresholdMb,
@@ -280,7 +345,7 @@ class TurboDownloadService {
       return;
     }
 
-    // 3. Multi-Threaded Parallel 32-Isolate Download (APK, ZIP, ISO, Large Binaries)
+    // 2. Intelligent Range & Media Probing for Turbo Parallel Acceleration
     task.status = DownloadStatus.analyzing;
     final probeResult = await probeRemoteFile(task.sourceUrl);
     task.totalSizeBytes = probeResult['totalBytes'] as int;
@@ -291,30 +356,28 @@ class TurboDownloadService {
       throw Exception('الرابط المعطى محمي أو غير مباشر (صفحة ويب إعلانية وليست ملفاً حقيقياً). افتح الرابط في المتصفح لتحميله');
     }
 
-    if (task.totalSizeBytes <= 0 || !supportsRanges) {
-      debugPrint('[TurboDownloadService] Range requests unsupported. Falling back to Single-Stream Mode.');
-      await downloadSingleStream(
-        task: task,
-        ramBufferThresholdMb: ramBufferThresholdMb,
-      );
-      return;
+    // 3. If the server supports Range requests, launch Multi-Threaded Parallel Rocket Mode!
+    if (supportsRanges && task.totalSizeBytes > 1024 * 1024) {
+      debugPrint('[TurboDownloadService] 🚀 Range supported (${task.totalSizeBytes} bytes). Launching Parallel Turbo Mode!');
+      try {
+        await _executeParallelDownload(
+          task: task,
+          deviceMetrics: deviceMetrics,
+          customThreadCount: customThreadCount,
+          ramBufferThresholdMb: ramBufferThresholdMb,
+        );
+        return;
+      } catch (e) {
+        debugPrint('[TurboDownloadService] Parallel download error, falling back to Single-Stream: $e');
+      }
     }
 
-    // 4. Launch Multi-Thread Parallel 32 Isolates
-    try {
-      await _executeParallelDownload(
-        task: task,
-        deviceMetrics: deviceMetrics,
-        customThreadCount: customThreadCount,
-        ramBufferThresholdMb: ramBufferThresholdMb,
-      );
-    } catch (e) {
-      debugPrint('[TurboDownloadService] Parallel download error, falling back to Single-Stream: $e');
-      await downloadSingleStream(
-        task: task,
-        ramBufferThresholdMb: ramBufferThresholdMb,
-      );
-    }
+    // 4. Single-Stream Buffered Fallback
+    debugPrint('[TurboDownloadService] ⚡ Executing High-Speed Buffered Single-Stream Mode.');
+    await downloadSingleStream(
+      task: task,
+      ramBufferThresholdMb: ramBufferThresholdMb,
+    );
   }
 
   /// [downloadYouTubeDirectNative]: Streams directly from Google's high-speed CDN video servers

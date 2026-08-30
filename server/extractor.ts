@@ -251,35 +251,196 @@ async function extractTikTokLoveTik(url: string): Promise<ExtractionResult | nul
 }
 
 // -------------------------------------------------------------
-// Instagram & Twitter / X Extractors
+// Instagram, Facebook, Threads, Twitter, Reddit & Universal Extractors
 // -------------------------------------------------------------
 
-async function extractInstagramSaveClip(url: string): Promise<ExtractionResult | null> {
+async function extractInstagramMulti(url: string): Promise<ExtractionResult | null> {
+  // Method 1: SaveClip
   try {
     const resp = await axios.post(
       'https://api.saveclip.app/v1/get',
       { url },
       {
         timeout: 5000,
-        headers: { 'User-Agent': BROWSER_UA },
+        headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
       }
     );
 
     if (resp.status === 200 && resp.data?.data?.length > 0) {
       const first = resp.data.data[0];
       const directUrl = first.url || first.video_url;
-      if (directUrl) {
+      if (directUrl && String(directUrl).startsWith('http')) {
         return {
           success: true,
           direct_url: directUrl,
-          title: `Instagram_Reel_${Date.now()}`,
+          title: `Instagram_Media_${Date.now()}`,
           format: 'mp4',
           thumbnail: first.thumbnail,
-          provider: 'SaveClip Instagram HD',
+          provider: 'SaveClip Instagram Engine 📸',
         };
       }
     }
   } catch (_) {}
+
+  // Method 2: FastDL / SnapInsta scraper
+  try {
+    const params = new URLSearchParams();
+    params.append('q', url);
+    params.append('t', 'media');
+    params.append('lang', 'en');
+
+    const resp = await axios.post('https://v3.fastdl.app/api/convert', params, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    if (resp.status === 200 && resp.data?.html) {
+      const html = resp.data.html;
+      const match = html.match(/href="([^"]+)"[^>]*title="Download Video"/i) ||
+                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
+                    html.match(/class="btn-download[^"]*"[^>]*href="([^"]+)"/i);
+      if (match && match[1]) {
+        return {
+          success: true,
+          direct_url: match[1].replace(/&amp;/g, '&'),
+          title: `Instagram_Reel_${Date.now()}`,
+          format: 'mp4',
+          provider: 'FastDL Instagram Engine ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 3: Direct Instagram GraphQL Public endpoint
+  try {
+    let cleanIgUrl = url.split('?')[0];
+    if (!cleanIgUrl.endsWith('/')) cleanIgUrl += '/';
+    const jsonUrl = `${cleanIgUrl}?__a=1&__d=dis`;
+
+    const resp = await axios.get(jsonUrl, {
+      timeout: 4000,
+      headers: {
+        'User-Agent': MOBILE_UA,
+        'Sec-Fetch-Site': 'same-origin',
+        Accept: '*/*',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const items = resp.data.graphql?.shortcode_media || resp.data.items?.[0];
+      const videoUrl = items?.video_url || items?.video_versions?.[0]?.url;
+      if (videoUrl) {
+        return {
+          success: true,
+          direct_url: videoUrl,
+          title: `Instagram_${Date.now()}`,
+          format: 'mp4',
+          thumbnail: items?.display_url,
+          provider: 'Instagram Direct CDN ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+async function extractFacebookMulti(url: string): Promise<ExtractionResult | null> {
+  // Method 1: SnapSave / FBDownloader API
+  try {
+    const params = new URLSearchParams();
+    params.append('url', url);
+
+    const resp = await axios.post('https://snapsave.app/action.php?lang=en', params, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+      const match = body.match(/href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success/i) ||
+                    body.match(/(https:\/\/[^"'\\]+\.mp4[^"'\\]*)/i);
+      if (match && match[1]) {
+        let streamUrl = match[1].replace(/\\/g, '').replace(/&amp;/g, '&');
+        return {
+          success: true,
+          direct_url: streamUrl,
+          title: `Facebook_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'SnapSave Facebook HD ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 2: FDown / Getfvid Parser
+  try {
+    const params = new URLSearchParams();
+    params.append('url', url);
+
+    const resp = await axios.post('https://fdown.net/download.php', params, {
+      timeout: 5000,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const body = resp.data.toString();
+      const hdMatch = body.match(/id="hd"[\s\S]*?href="([^"]+)"/i);
+      const sdMatch = body.match(/id="sd"[\s\S]*?href="([^"]+)"/i);
+      const streamUrl = hdMatch?.[1] || sdMatch?.[1];
+
+      if (streamUrl && streamUrl.startsWith('http')) {
+        return {
+          success: true,
+          direct_url: streamUrl.replace(/&amp;/g, '&'),
+          title: `Facebook_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'FDown Facebook Engine ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
+  // Method 3: FB Video HTML scraper
+  try {
+    const resp = await axios.get(url, {
+      timeout: 4500,
+      headers: {
+        'User-Agent': MOBILE_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const html = resp.data.toString();
+      const hdMatch = html.match(/"playable_url_quality_hd":"([^"]+)"/i);
+      const sdMatch = html.match(/"playable_url":"([^"]+)"/i);
+      let streamUrl = hdMatch?.[1] || sdMatch?.[1];
+
+      if (streamUrl) {
+        streamUrl = decodeURIComponent(JSON.parse(`"${streamUrl}"`));
+        return {
+          success: true,
+          direct_url: streamUrl,
+          title: `Facebook_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'Facebook Direct Stream ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+
   return null;
 }
 
@@ -299,11 +460,59 @@ async function extractTwitterTwitsave(url: string): Promise<ExtractionResult | n
           direct_url: match[1],
           title: `Twitter_X_Video_${Date.now()}`,
           format: 'mp4',
-          provider: 'Twitsave X Engine',
+          provider: 'Twitsave X Engine ⚡',
         };
       }
     }
   } catch (_) {}
+  return null;
+}
+
+// Universal All-In-One Downloader (Pinterest, Reddit, Threads, Snapchat, Dailymotion, Vimeo)
+async function extractUniversalSocialMulti(url: string): Promise<ExtractionResult | null> {
+  // Method 1: Cobalt Engine across instances
+  const cobalt = await extractCobalt(url);
+  if (cobalt && cobalt.direct_url) {
+    return cobalt;
+  }
+
+  // Method 2: Public Media Downloader APIs
+  const apiHosts = [
+    {
+      endpoint: 'https://api.vkrdownloader.com/server',
+      params: { vkr: url },
+    },
+    {
+      endpoint: 'https://api.savefrom.net/api/convert',
+      params: { url: url },
+    }
+  ];
+
+  for (const api of apiHosts) {
+    try {
+      const resp = await axios.get(api.endpoint, {
+        params: api.params,
+        timeout: 4500,
+        headers: { 'User-Agent': BROWSER_UA },
+      });
+
+      if (resp.status === 200 && resp.data) {
+        const d = resp.data;
+        const directUrl = d.url || d.download_url || d.video_url || (d.downloads && d.downloads[0]?.url);
+        if (directUrl && String(directUrl).startsWith('http')) {
+          return {
+            success: true,
+            direct_url: directUrl,
+            title: (d.title || `Media_${Date.now()}`).replace(/[\\/:*?"<>|]/g, '_'),
+            format: 'mp4',
+            thumbnail: d.thumbnail || d.thumb,
+            provider: 'Universal Social Multi-Server 🌐',
+          };
+        }
+      }
+    } catch (_) {}
+  }
+
   return null;
 }
 
@@ -475,17 +684,33 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
     } catch (_) {}
   }
 
-  // 3. DEDICATED INSTAGRAM ENGINE
+  // 3. DEDICATED INSTAGRAM ENGINE RACE
   if (lower.includes('instagram.com')) {
-    console.log(`[UniversalExtractor] 📸 Launching Instagram Engine for: ${cleanUrl}`);
-    const igResult = await extractInstagramSaveClip(cleanUrl);
+    console.log(`[UniversalExtractor] 📸 Launching Instagram Multi Engine for: ${cleanUrl}`);
+    const igResult = await extractInstagramMulti(cleanUrl);
     if (igResult && igResult.direct_url) return igResult;
 
     const cobaltResult = await extractCobalt(cleanUrl);
     if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
+
+    const universal = await extractUniversalSocialMulti(cleanUrl);
+    if (universal && universal.direct_url) return universal;
   }
 
-  // 4. DEDICATED TWITTER / X ENGINE
+  // 4. DEDICATED FACEBOOK ENGINE RACE
+  if (lower.includes('facebook.com') || lower.includes('fb.watch') || lower.includes('fb.com')) {
+    console.log(`[UniversalExtractor] 📘 Launching Facebook Multi Engine for: ${cleanUrl}`);
+    const fbResult = await extractFacebookMulti(cleanUrl);
+    if (fbResult && fbResult.direct_url) return fbResult;
+
+    const cobaltResult = await extractCobalt(cleanUrl);
+    if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
+
+    const universal = await extractUniversalSocialMulti(cleanUrl);
+    if (universal && universal.direct_url) return universal;
+  }
+
+  // 5. DEDICATED TWITTER / X ENGINE
   if (lower.includes('twitter.com') || lower.includes('x.com')) {
     console.log(`[UniversalExtractor] 🐦 Launching Twitter/X Engine for: ${cleanUrl}`);
     const twResult = await extractTwitterTwitsave(cleanUrl);
@@ -493,9 +718,32 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
 
     const cobaltResult = await extractCobalt(cleanUrl);
     if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
+
+    const universal = await extractUniversalSocialMulti(cleanUrl);
+    if (universal && universal.direct_url) return universal;
   }
 
-  // 5. GENERAL COBALT ENGINE (Facebook, Reddit, Vimeo, Pinterest, etc.)
+  // 6. GENERAL ALL-PLATFORM SOCIAL ENGINE (Threads, Snapchat, Reddit, Pinterest, Vimeo, Dailymotion, etc.)
+  if (
+    lower.includes('threads.net') ||
+    lower.includes('reddit.com') ||
+    lower.includes('pinterest.com') ||
+    lower.includes('pin.it') ||
+    lower.includes('snapchat.com') ||
+    lower.includes('vimeo.com') ||
+    lower.includes('dailymotion.com') ||
+    lower.includes('bilibili.com') ||
+    lower.includes('soundcloud.com')
+  ) {
+    console.log(`[UniversalExtractor] 🌐 Launching Universal Social Racer for: ${cleanUrl}`);
+    const universal = await extractUniversalSocialMulti(cleanUrl);
+    if (universal && universal.direct_url) return universal;
+
+    const cobaltRes = await extractCobalt(cleanUrl);
+    if (cobaltRes && cobaltRes.direct_url) return cobaltRes;
+  }
+
+  // 7. GENERAL COBALT ENGINE BACKUP
   try {
     const cobaltRes = await extractCobalt(cleanUrl);
     if (cobaltRes && cobaltRes.direct_url) {
@@ -503,7 +751,7 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
     }
   } catch (_) {}
 
-  // 6. DIRECT FILE STREAM PROBE (APK, ISO, ZIP, MP4 direct, etc.)
+  // 8. DIRECT FILE STREAM PROBE (APK, ISO, ZIP, MP4 direct, etc.)
   console.log(`[UniversalExtractor] 🌐 Probing Direct Link for: ${cleanUrl}`);
   const directProbe = await probeDirectLink(cleanUrl);
   if (directProbe && directProbe.direct_url) {
