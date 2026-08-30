@@ -374,7 +374,7 @@ class DualCloudExtractor {
       if (res.statusCode == 200) {
         final body = utf8.decode(res.bodyBytes);
         final match = RegExp(r'href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success').firstMatch(body) ??
-            RegExp(r'(https:\/\/[^"\'\\]+\.mp4[^"\'\\]*)').firstMatch(body);
+            RegExp(r'(https?://[^\s"<>\\]+?\.mp4[^\s"<>\\]*)').firstMatch(body);
 
         if (match != null && match.group(1) != null) {
           final streamUrl = match.group(1)!.replaceAll(r'\', '').replaceAll('&amp;', '&');
