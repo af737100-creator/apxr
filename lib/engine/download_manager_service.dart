@@ -326,10 +326,15 @@ class DownloadManagerService extends ChangeNotifier {
     bool isApk = cleanUrl.toLowerCase().contains('.apk') || inferredName.toLowerCase().endsWith('.apk');
 
     if (isYouTube) {
-      // Direct YouTube stream handling: lightning fast, no cloud extractor wait needed
+      // Direct YouTube stream handling with authentic video title resolution
       final ytId = CloudExtractorService.extractYouTubeVideoId(cleanUrl);
-      if (preferredTitle == null || preferredTitle.isEmpty) {
-        inferredName = 'YouTube_${ytId ?? DateTime.now().millisecondsSinceEpoch}.mp4';
+      if (preferredTitle == null || preferredTitle.isEmpty || preferredTitle.startsWith('YouTube_')) {
+        final realTitle = await CloudExtractorService.fetchYouTubeRealTitle(cleanUrl);
+        if (realTitle != null && realTitle.isNotEmpty) {
+          inferredName = '$realTitle.mp4';
+        } else {
+          inferredName = 'YouTube_${ytId ?? DateTime.now().millisecondsSinceEpoch}.mp4';
+        }
       } else if (!inferredName.toLowerCase().endsWith('.mp4') && !inferredName.toLowerCase().endsWith('.mkv')) {
         inferredName = '$inferredName.mp4';
       }

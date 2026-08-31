@@ -51,6 +51,7 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
         connectTimeout: const Duration(seconds: 15),
         receiveTimeout: const Duration(seconds: 40),
         responseType: ResponseType.stream,
+        validateStatus: (status) => status != null && status < 400,
         headers: {
           'Range': 'bytes=$currentOffset-${params.endByte}',
           'User-Agent':
@@ -71,6 +72,19 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
         throw Exception('Empty response stream from server.');
       }
 
+      // If server returned 200 instead of 206, it ignored Range header
+      if (response.statusCode == 200 && params.segmentIndex > 0) {
+        // Higher index workers should abort and allow worker 0 to handle single stream
+        params.mainSendPort.send(
+          ChunkWorkerPacket(
+            segmentIndex: params.segmentIndex,
+            offset: currentOffset,
+            error: 'Server does not support partial ranges (returned 200 OK).',
+          ),
+        );
+        return;
+      }
+
       await for (final List<int> rawChunk in stream) {
         final Uint8List bytes = rawChunk is Uint8List ? rawChunk : Uint8List.fromList(rawChunk);
         params.mainSendPort.send(
@@ -81,10 +95,15 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
           ),
         );
         currentOffset += bytes.lengthInBytes;
+
+        // If we have received all expected bytes for this chunk, stop streaming
+        if (currentOffset > params.endByte) {
+          break;
+        }
       }
 
       // If we downloaded up to or beyond endByte, emit completion signal and exit
-      if (currentOffset > params.endByte) {
+      if (currentOffset > params.endByte || currentOffset >= params.endByte) {
         params.mainSendPort.send(
           ChunkWorkerPacket(
             segmentIndex: params.segmentIndex,

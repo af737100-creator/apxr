@@ -752,6 +752,10 @@ class TurboDownloadService {
           chunk.status = ChunkStatus.failed;
           chunk.errorMessage = message.error;
           debugPrint('[TurboDownloadService] Worker ${message.segmentIndex} error: ${message.error}');
+          // If any chunk fails unrecoverably, fail completer so pipeline falls back to robust Single-Stream
+          if (!downloadFinishedCompleter.isCompleted) {
+            downloadFinishedCompleter.completeError(Exception('Worker ${message.segmentIndex} failed: ${message.error}'));
+          }
         } else if (message.isCompleted) {
           chunk.status = ChunkStatus.completed;
           chunk.downloadedBytes = chunk.totalExpectedBytes;

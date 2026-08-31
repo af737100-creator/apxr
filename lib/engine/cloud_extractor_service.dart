@@ -194,6 +194,46 @@ class CloudExtractorService {
     }
   }
 
+  /// Quickly fetches the authentic YouTube video title (Arabic/English) without random symbols
+  static Future<String?> fetchYouTubeRealTitle(String urlOrVideoId) async {
+    try {
+      final videoId = extractYouTubeVideoId(urlOrVideoId) ?? urlOrVideoId;
+      if (videoId.length != 11) return null;
+
+      // 1. YouTube Official oEmbed API (Ultra-fast ~80ms public response)
+      try {
+        final dio = Dio(BaseOptions(
+          connectTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
+        ));
+        final oembedRes = await dio.get(
+          'https://www.youtube.com/oembed',
+          queryParameters: {
+            'url': 'https://www.youtube.com/watch?v=$videoId',
+            'format': 'json',
+          },
+        );
+        if (oembedRes.statusCode == 200 && oembedRes.data is Map) {
+          final title = oembedRes.data['title']?.toString();
+          if (title != null && title.trim().isNotEmpty) {
+            return title.trim();
+          }
+        }
+      } catch (_) {}
+
+      // 2. YoutubeExplode Metadata Fallback
+      try {
+        final yt = YoutubeExplode();
+        final video = await yt.videos.get(VideoId(videoId)).timeout(const Duration(seconds: 4));
+        yt.close();
+        if (video.title.trim().isNotEmpty) {
+          return video.title.trim();
+        }
+      } catch (_) {}
+    } catch (_) {}
+    return null;
+  }
+
   /// Extracts the direct MP4 stream at maximum velocity with Dual Server Failover
   Future<CloudExtractedMedia> extractDirectMedia(String webpageUrl) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
