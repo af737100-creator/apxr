@@ -127,15 +127,26 @@ class SmartUrlFilter {
         return false;
       }
       
-      // Direct APK / XAPK CDN endpoints (APKPure, Uptodown, APKMirror, APKCombo)
+      // Direct APK / XAPK CDN endpoints (APKPure, Uptodown, APKMirror, APKCombo, MediaFire)
       if (host.contains('d.apkpure.net') ||
           host.contains('d.apkpure.com') ||
           host.contains('download.apkpure.com') ||
           (host.contains('apkpure') && (path.contains('/b/apk/') || path.contains('/b/xapk/'))) ||
           host.contains('dw.uptodown.com') ||
-          (host.contains('uptodown.com') && path.contains('/dwn/')) ||
+          (host.contains('uptodown.com') && (path.contains('/dwn/') || path.contains('/post-download/'))) ||
           (host.contains('apkmirror.com') && path.contains('download.php')) ||
+          (host.contains('mediafire.com') && (host.startsWith('download') || path.contains('/download/'))) ||
+          (host.contains('sourceforge.net') && path.contains('/download')) ||
+          (host.contains('github.com') && path.contains('/releases/download/')) ||
           host.contains('objects.githubusercontent.com')) {
+        return true;
+      }
+
+      // Query parameter flags for direct downloads
+      if (uri.queryParameters.containsKey('download') ||
+          uri.queryParameters.containsKey('dl') ||
+          uri.queryParameters.containsKey('export') && uri.queryParameters['export'] == 'download' ||
+          uri.queryParameters.containsKey('response-content-disposition')) {
         return true;
       }
 

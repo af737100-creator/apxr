@@ -237,4 +237,58 @@ class ZeroByteShieldEngine {
 
     return MagicFileType.unknown;
   }
+
+  /// If a file was saved with an incorrect or fallback extension like `.bin`,
+  /// inspects its magic bytes and automatically renames it to the genuine extension (.apk, .mp4, .zip).
+  static Future<String> autoRepairFileExtension(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) return filePath;
+    final length = await file.length();
+    if (length < 16) return filePath;
+
+    RandomAccessFile? raf;
+    try {
+      raf = await file.open(mode: FileMode.read);
+      final header = await raf.read(64);
+      final detected = detectTypeFromBytes(header);
+
+      final currentLower = filePath.toLowerCase();
+      String? correctExt;
+
+      if (detected == MagicFileType.apkOrZip) {
+        if (currentLower.endsWith('.bin') || currentLower.endsWith('.download') || !currentLower.contains('.')) {
+          correctExt = 'apk';
+        }
+      } else if (detected == MagicFileType.mp4Video) {
+        if (currentLower.endsWith('.bin') || currentLower.endsWith('.download')) {
+          correctExt = 'mp4';
+        }
+      } else if (detected == MagicFileType.mkvVideo) {
+        if (currentLower.endsWith('.bin') || currentLower.endsWith('.download')) {
+          correctExt = 'mkv';
+        }
+      } else if (detected == MagicFileType.mp3Audio) {
+        if (currentLower.endsWith('.bin') || currentLower.endsWith('.download')) {
+          correctExt = 'mp3';
+        }
+      }
+
+      if (correctExt != null) {
+        final dir = file.parent.path;
+        var nameWithoutExt = file.uri.pathSegments.last;
+        if (nameWithoutExt.contains('.')) {
+          nameWithoutExt = nameWithoutExt.substring(0, nameWithoutExt.lastIndexOf('.'));
+        }
+        final newPath = '$dir/$nameWithoutExt.$correctExt';
+        await file.rename(newPath);
+        debugPrint('[ZeroByteShieldEngine] 🔄 Auto-repaired corrupted extension: $filePath -> $newPath');
+        return newPath;
+      }
+    } catch (e) {
+      debugPrint('[ZeroByteShieldEngine] Auto-repair notice: $e');
+    } finally {
+      await raf?.close();
+    }
+    return filePath;
+  }
 }

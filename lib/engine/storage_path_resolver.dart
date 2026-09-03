@@ -86,14 +86,38 @@ class StoragePathResolver {
     return '$clean$ext';
   }
 
-  /// Resolves the public Movies directory (`Movies/HyperPulse`) with verified write test.
+  /// Categorized subfolder name based on file extension and media flags
+  static String categorizeSubfolder({
+    String? fileName,
+    String? fileExtension,
+    bool isVideo = false,
+    bool isApk = false,
+    bool isArchive = false,
+    bool isAudio = false,
+  }) {
+    if (isApk) return 'Apps';
+    if (isVideo) return 'Videos';
+    if (isArchive) return 'Archives';
+    if (isAudio) return 'Audio';
+
+    final ext = (fileExtension ?? (fileName != null && fileName.contains('.') ? fileName.split('.').last : '')).toLowerCase().trim();
+    if (ext == 'apk' || ext == 'xapk' || ext == 'apks') return 'Apps';
+    if (['mp4', 'mkv', 'webm', 'mov', 'avi', '3gp', 'flv'].contains(ext)) return 'Videos';
+    if (['zip', 'rar', '7z', 'tar', 'gz', 'iso', 'bz2', 'xz'].contains(ext)) return 'Archives';
+    if (['mp3', 'm4a', 'wav', 'flac', 'aac', 'ogg', 'opus'].contains(ext)) return 'Audio';
+    if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'epub'].contains(ext)) return 'Documents';
+
+    return 'General';
+  }
+
+  /// Resolves the public Movies directory (`Movies/HyperPulse/Videos`) with verified write test.
   static Future<String> resolveMoviesDirectory() async {
     try {
       if (Platform.isAndroid) {
         // 1. Query Native Android Bridge for Environment.DIRECTORY_MOVIES
         final nativeMovies = await AndroidSystemBridge.getPublicMoviesPath();
         if (nativeMovies != null && nativeMovies.isNotEmpty) {
-          final target = Directory(nativeMovies);
+          final target = Directory(p.join(nativeMovies, 'Videos'));
           if (!await target.exists()) {
             try {
               await target.create(recursive: true);
@@ -104,8 +128,8 @@ class StoragePathResolver {
           }
         }
 
-        // 2. Standard Android /storage/emulated/0/Movies/HyperPulse
-        final fallbackDir = Directory('/storage/emulated/0/Movies/$appSubfolder');
+        // 2. Standard Android /storage/emulated/0/Movies/HyperPulse/Videos
+        final fallbackDir = Directory('/storage/emulated/0/Movies/$appSubfolder/Videos');
         if (!await fallbackDir.exists()) {
           try {
             await fallbackDir.create(recursive: true);
@@ -117,19 +141,38 @@ class StoragePathResolver {
       }
 
       // 3. Fallback to standard verified Downloads or App Sandbox
-      return await resolveDownloadDirectory(isMediaVideo: false);
+      return await resolveDownloadDirectory(isMediaVideo: true, category: 'Videos');
     } catch (e) {
       debugPrint('[StoragePathResolver] resolveMoviesDirectory error: $e');
-      return await resolveDownloadDirectory(isMediaVideo: false);
+      return await resolveDownloadDirectory(isMediaVideo: true, category: 'Videos');
     }
   }
 
-  /// Resolves a 100% verified writable directory to save downloads.
-  /// Seamlessly cascades from Public Movies/Downloads -> External App Sandbox -> Internal App Documents.
+  /// Resolves a 100% verified writable directory to save downloads organized by category.
+  /// Structure in phone storage:
+  /// Download/HyperPulse/Apps
+  /// Download/HyperPulse/Videos
+  /// Download/HyperPulse/Archives
+  /// Download/HyperPulse/Audio
+  /// Download/HyperPulse/Documents
   static Future<String> resolveDownloadDirectory({
     bool isMediaVideo = false,
+    bool isApk = false,
+    bool isArchive = false,
+    bool isAudio = false,
+    String? category,
+    String? fileName,
     bool preferPublicDownloads = true,
   }) async {
+    final chosenCategory = category ??
+        categorizeSubfolder(
+          fileName: fileName,
+          isVideo: isMediaVideo,
+          isApk: isApk,
+          isArchive: isArchive,
+          isAudio: isAudio,
+        );
+
     try {
       if (isMediaVideo && Platform.isAndroid) {
         final moviesDir = await resolveMoviesDirectory();
@@ -140,11 +183,11 @@ class StoragePathResolver {
 
       if (Platform.isAndroid) {
         if (preferPublicDownloads) {
-          // 0. Native Android Bridge Public Downloads (Environment.DIRECTORY_DOWNLOADS/HyperPulse)
+          // 0. Native Android Bridge Public Downloads (Environment.DIRECTORY_DOWNLOADS/HyperPulse/Category)
           try {
             final nativeDownloads = await AndroidSystemBridge.getPublicDownloadsPath();
             if (nativeDownloads != null && nativeDownloads.isNotEmpty) {
-              final target = Directory(nativeDownloads);
+              final target = Directory(p.join(nativeDownloads, chosenCategory));
               if (!await target.exists()) {
                 await target.create(recursive: true);
               }
@@ -154,23 +197,9 @@ class StoragePathResolver {
             }
           } catch (_) {}
 
-          // 1. Attempt standard Public Downloads
+          // 1. Direct path to /storage/emulated/0/Download/HyperPulse/Category
           try {
-            final Directory? downloadsDir = await getDownloadsDirectory();
-            if (downloadsDir != null) {
-              final target = Directory(p.join(downloadsDir.path, appSubfolder));
-              if (!await target.exists()) {
-                await target.create(recursive: true);
-              }
-              if (await _isWritable(target.path)) {
-                return target.path;
-              }
-            }
-          } catch (_) {}
-
-          // 2. Direct path to /storage/emulated/0/Download/HyperPulse
-          try {
-            final directDownloads = Directory('/storage/emulated/0/Download/$appSubfolder');
+            final directDownloads = Directory('/storage/emulated/0/Download/$appSubfolder/$chosenCategory');
             if (!await directDownloads.exists()) {
               await directDownloads.create(recursive: true);
             }
@@ -178,13 +207,38 @@ class StoragePathResolver {
               return directDownloads.path;
             }
           } catch (_) {}
+
+          // 2. Direct path to root storage /storage/emulated/0/HyperPulse/Category
+          try {
+            final rootFolder = Directory('/storage/emulated/0/$appSubfolder/$chosenCategory');
+            if (!await rootFolder.exists()) {
+              await rootFolder.create(recursive: true);
+            }
+            if (await _isWritable(rootFolder.path)) {
+              return rootFolder.path;
+            }
+          } catch (_) {}
+
+          // 3. Attempt standard getDownloadsDirectory
+          try {
+            final Directory? downloadsDir = await getDownloadsDirectory();
+            if (downloadsDir != null) {
+              final target = Directory(p.join(downloadsDir.path, appSubfolder, chosenCategory));
+              if (!await target.exists()) {
+                await target.create(recursive: true);
+              }
+              if (await _isWritable(target.path)) {
+                return target.path;
+              }
+            }
+          } catch (_) {}
         }
 
-        // 3. Guaranteed External App Storage (Scoped-Storage safe, no permission needed)
+        // 4. Guaranteed External App Storage (Scoped-Storage safe, no permission needed)
         try {
           final Directory? extDir = await getExternalStorageDirectory();
           if (extDir != null) {
-            final target = Directory(p.join(extDir.path, 'Downloads'));
+            final target = Directory(p.join(extDir.path, 'Downloads', chosenCategory));
             if (!await target.exists()) {
               await target.create(recursive: true);
             }
@@ -194,16 +248,16 @@ class StoragePathResolver {
           }
         } catch (_) {}
 
-        // 4. Guaranteed Safe Sandbox (Application Documents)
+        // 5. Guaranteed Safe Sandbox (Application Documents)
         final Directory appDocDir = await getApplicationDocumentsDirectory();
-        final target = Directory(p.join(appDocDir.path, 'Downloads'));
+        final target = Directory(p.join(appDocDir.path, 'Downloads', chosenCategory));
         if (!await target.exists()) {
           await target.create(recursive: true);
         }
         return target.path;
       } else if (Platform.isIOS) {
         final Directory appDocDir = await getApplicationDocumentsDirectory();
-        final target = Directory(p.join(appDocDir.path, 'Downloads'));
+        final target = Directory(p.join(appDocDir.path, 'Downloads', chosenCategory));
         if (!await target.exists()) {
           await target.create(recursive: true);
         }
@@ -212,10 +266,18 @@ class StoragePathResolver {
         // Desktop / Web
         final Directory? downloadsDir = await getDownloadsDirectory();
         if (downloadsDir != null && await _isWritable(downloadsDir.path)) {
-          return downloadsDir.path;
+          final target = Directory(p.join(downloadsDir.path, appSubfolder, chosenCategory));
+          if (!await target.exists()) {
+            await target.create(recursive: true);
+          }
+          return target.path;
         }
         final Directory appDocDir = await getApplicationDocumentsDirectory();
-        return appDocDir.path;
+        final target = Directory(p.join(appDocDir.path, 'Downloads', chosenCategory));
+        if (!await target.exists()) {
+          await target.create(recursive: true);
+        }
+        return target.path;
       }
     } catch (e) {
       debugPrint('[StoragePathResolver] Error resolving storage: $e');

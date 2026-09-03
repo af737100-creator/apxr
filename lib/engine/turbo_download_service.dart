@@ -17,6 +17,8 @@ import 'zero_byte_shield_engine.dart';
 import 'smart_resume_manager.dart';
 import 'dual_network_flight_mode.dart';
 import 'android_system_bridge.dart';
+import 'universal_app_store_resolver.dart';
+import 'package:path/path.dart' as p;
 
 /// Event dispatched to listeners with real-time download telemetry.
 class TurboProgressEvent {
@@ -301,6 +303,14 @@ class TurboDownloadService {
           }
         }
 
+        // Auto-repair any .bin or missing extension using magic numbers
+        final repairedPath = await ZeroByteShieldEngine.autoRepairFileExtension(task.fullFilePath);
+        if (repairedPath != task.fullFilePath) {
+          task.fullFilePath = repairedPath;
+          task.fileName = p.basename(repairedPath);
+          debugPrint('[TurboDownloadService] 🔄 Auto-repaired final task name to: ${task.fileName}');
+        }
+
         // Update task status and finished time
         task.status = DownloadStatus.completed;
         task.finishedAt = DateTime.now();
@@ -357,6 +367,22 @@ class TurboDownloadService {
     required int ramBufferThresholdMb,
     required bool forceSingleStream,
   }) async {
+    // 0. Resolve store page URLs (APKPure, Uptodown, Mediafire, etc.) if raw page link was passed
+    if (UniversalAppStoreResolver.isStoreOrHostingPage(task.sourceUrl) &&
+        !task.sourceUrl.contains('dw.uptodown.com') &&
+        !task.sourceUrl.contains('d.apkpure.net') &&
+        !task.sourceUrl.contains('download.apkpure.com')) {
+      final resolved = await UniversalAppStoreResolver.resolveStoreUrl(task.sourceUrl, pageTitle: task.fileName);
+      if (resolved != null && resolved.directDownloadUrl.isNotEmpty) {
+        task.sourceUrl = resolved.directDownloadUrl;
+        if (resolved.cleanFileName.isNotEmpty) {
+          task.fileName = resolved.cleanFileName;
+          task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
+          task.tempFilePath = '${task.fullFilePath}.turbo_part';
+        }
+      }
+    }
+
     // 1. Direct YouTube URL -> Use Ultra-Fast Native Explode Stream
     if (CloudExtractorService.isYouTubeUrl(task.sourceUrl)) {
       final ytId = CloudExtractorService.extractYouTubeVideoId(task.sourceUrl);
@@ -390,6 +416,31 @@ class TurboDownloadService {
     task.totalSizeBytes = probeResult['totalBytes'] as int;
     final bool supportsRanges = probeResult['supportsRanges'] as bool;
     final String contentType = (probeResult['contentType'] as String?) ?? '';
+
+    // Correct file name and extension if probe returned genuine Content-Disposition header
+    final probedName = probeResult['fileName'] as String?;
+    if (probedName != null && probedName.isNotEmpty) {
+      final lower = probedName.toLowerCase();
+      if (lower.endsWith('.apk') ||
+          lower.endsWith('.xapk') ||
+          lower.endsWith('.zip') ||
+          lower.endsWith('.mp4') ||
+          lower.endsWith('.mkv')) {
+        task.fileName = StoragePathResolver.sanitizeFileName(probedName);
+        task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
+        task.tempFilePath = '${task.fullFilePath}.turbo_part';
+      }
+    }
+    if ((contentType.contains('vnd.android.package-archive') ||
+            contentType.contains('application/zip') ||
+            task.sourceUrl.toLowerCase().contains('uptodown') ||
+            task.sourceUrl.toLowerCase().contains('apkpure')) &&
+        task.fileName.toLowerCase().endsWith('.bin')) {
+      final base = task.fileName.substring(0, task.fileName.length - 4);
+      task.fileName = '$base.apk';
+      task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
+      task.tempFilePath = '${task.fullFilePath}.turbo_part';
+    }
 
     if (contentType.contains('text/html') && (task.isApk || task.isVideo || task.isArchive)) {
       throw Exception('الرابط المعطى محمي أو غير مباشر (صفحة ويب إعلانية وليست ملفاً حقيقياً). افتح الرابط في المتصفح لتحميله');

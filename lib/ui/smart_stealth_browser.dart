@@ -5,6 +5,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/download_manager_service.dart';
 import '../engine/cloud_extractor_service.dart';
+import '../engine/universal_app_store_resolver.dart';
 import 'multi_downloads_screen.dart';
 
 /// [SmartStealthBrowser] is an integrated in-app web browser designed for flawless
@@ -58,6 +59,8 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
   double _loadingProgress = 0.0;
   String _currentTitle = 'المتصفح // HyperPulse';
   String _currentUrl = '';
+  String? _lastDownloadedUrl;
+  DateTime? _lastDownloadTime;
 
   final List<Map<String, String>> _quickBookmarks = [
     {'name': 'MediaFire', 'url': 'https://www.mediafire.com', 'icon': '🔥'},
@@ -190,7 +193,9 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
               href.includes('/dwn/') ||
               href.includes('/post-download/') ||
               href.includes('/download/apk') ||
-              href.includes('download.php')
+              href.includes('download.php') ||
+              href.includes('releases/download') ||
+              href.includes('files/latest/download')
             ) {
               return href;
             }
@@ -205,7 +210,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           return null;
         }
 
-        // Global click listener to intercept direct APK & file downloads
+        // Intercept link and button clicks to prevent continuous page reloading
         document.addEventListener('click', function(e) {
           var target = e.target;
           while (target && target.tagName !== 'A' && target.tagName !== 'BUTTON') {
@@ -214,26 +219,27 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           if (target) {
             var directUrl = findDownloadLink(target);
             if (directUrl && window.HyperPulseDownloader) {
+              e.preventDefault();
+              e.stopPropagation();
               window.HyperPulseDownloader.postMessage(directUrl);
+              return false;
             }
           }
         }, true);
 
-        // Auto-sniff APKPure / Uptodown automatic download redirection
+        // Auto-sniff APKPure / Uptodown automatic download redirection once
         function checkAutoDownloadLink() {
           var apkPureLink = document.querySelector('#download_link, a[href*="/b/APK/"], a[href*="/b/XAPK/"], a[href*="d.apkpure.net"]');
           if (apkPureLink) {
             var dlUrl = apkPureLink.getAttribute('href');
             if (dlUrl && dlUrl.startsWith('http') && !isPromoStoreLink(dlUrl) && window.HyperPulseDownloader) {
-              // Automatically trigger target APK download
               window.HyperPulseDownloader.postMessage(dlUrl);
               return;
             }
           }
         }
 
-        setTimeout(checkAutoDownloadLink, 1200);
-        setTimeout(checkAutoDownloadLink, 2500);
+        setTimeout(checkAutoDownloadLink, 1500);
       })();
     ''';
     _webViewController.runJavaScript(script).catchError((_) {});
@@ -247,7 +253,25 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       return;
     }
 
-    // 2. Try extracting direct binary download URL from the page DOM (APKPure, Uptodown, Mediafire, GitHub, etc.)
+    // 2. First attempt: Use UniversalAppStoreResolver directly for store URLs
+    if (UniversalAppStoreResolver.isStoreOrHostingPage(_currentUrl)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚡ جاري استخراج رابط التطبيق المباشر من المتجر...'),
+            backgroundColor: Color(0xFF1F1D24),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+      final resolved = await UniversalAppStoreResolver.resolveStoreUrl(_currentUrl, pageTitle: _currentTitle);
+      if (resolved != null && resolved.directDownloadUrl.isNotEmpty) {
+        _startDownloadDirectly(resolved.directDownloadUrl, customTitle: resolved.cleanFileName);
+        return;
+      }
+    }
+
+    // 3. Try extracting direct binary download URL from the page DOM (APKPure, Uptodown, Mediafire, GitHub, etc.)
     try {
       final jsResult = await _webViewController.runJavaScriptReturningResult('''
         (function() {
@@ -257,7 +281,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
             return l.includes('apkpure-app') || l.includes('com.apkpure.aegon') || l.includes('uptodown-app');
           }
 
-          // 1. Check for APKPure direct app download link (Target APK, not the store app)
+          // 1. Check for APKPure direct app download link
           var apkPureBtn = document.querySelector('#download_link, a[href*="/b/APK/"], a[href*="/b/XAPK/"], a[href*="d.apkpure.net"], a[href*="download.apkpure.com"]');
           if (apkPureBtn) {
             var apkUrl = apkPureBtn.getAttribute('href');
@@ -283,7 +307,13 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
             return ghAsset.href;
           }
 
-          // 5. Scan all download links on page, filtering out promo store links
+          // 5. Check for SourceForge latest download
+          var sfBtn = document.querySelector('a[href*="/files/latest/download"]');
+          if (sfBtn && sfBtn.href && sfBtn.href.startsWith('http')) {
+            return sfBtn.href;
+          }
+
+          // 6. Scan all download links on page, filtering out promo store links
           var links = document.querySelectorAll('a[href*=".apk"], a[href*=".xapk"], a[href*=".zip"], a[href*=".mp4"], a[href*="download"]');
           for (var i = 0; i < links.length; i++) {
             var h = links[i].href;
@@ -294,15 +324,17 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
             }
           }
 
-          // 6. Check for HTML5 video sources
+          // 7. Check for HTML5 video sources
           var vid = document.querySelector('video source, video');
           if (vid && vid.src && vid.src.startsWith('http')) {
             return vid.src;
           }
 
-          // 7. If on download page, trigger click on target download button
+          // 8. If on download page with standard download button, extract its direct attribute or trigger it safely
           var primaryBtn = document.querySelector('#download_link, #detail-download-button, #downloadButton, a.button.download');
           if (primaryBtn) {
+            var dataUrl = primaryBtn.getAttribute('data-url') || primaryBtn.getAttribute('href');
+            if (dataUrl && dataUrl.startsWith('http') && !isPromo(dataUrl)) return dataUrl;
             primaryBtn.click();
             return 'CLICKED_PAGE_BUTTON';
           }
@@ -340,7 +372,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('اضغط على رابط التحميل أو "Click here" لبدء تنزيل ملف التطبيق فوراً'),
+            content: Text('اضغط على زر التنزيل داخل الصفحة لبدء تحميل التطبيق مباشرة دون إعادة تحميل المتصفح'),
             backgroundColor: Color(0xFFEAB308),
             duration: Duration(seconds: 3),
           ),
@@ -363,12 +395,23 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
   }
 
   Future<void> _startDownloadDirectly(String url, {String? customTitle}) async {
+    final now = DateTime.now();
+    if (_lastDownloadedUrl == url &&
+        _lastDownloadTime != null &&
+        now.difference(_lastDownloadTime!).inSeconds < 4) {
+      debugPrint('[SmartStealthBrowser] 🛡️ Ignored duplicate download request within 4s: $url');
+      return;
+    }
+    _lastDownloadedUrl = url;
+    _lastDownloadTime = now;
+
     HapticFeedback.mediumImpact();
 
     try {
+      final cleanTitle = UniversalAppStoreResolver.cleanAppTitle(customTitle ?? _currentTitle);
       final task = await _manager.enqueueDownload(
         url: url,
-        preferredTitle: customTitle ?? _currentTitle,
+        preferredTitle: cleanTitle,
       );
 
       if (mounted) {
