@@ -28,6 +28,7 @@ class HyperPulseForegroundService : Service() {
         const val ACTION_STOP_SERVICE = "ACTION_STOP_HYPERPULSE_SERVICE"
         const val BROADCAST_URL_CAUGHT = "com.hyperpulse.app.URL_CAUGHT"
         var isRunning = false
+        var hasActiveDownloads = false
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -50,7 +51,15 @@ class HyperPulseForegroundService : Service() {
 
         startForeground(NOTIFICATION_ID, buildNotification())
         isRunning = true
-        return START_STICKY
+        return START_NOT_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // If the user swiped away the app and no active download is running, dismiss notification
+        if (!hasActiveDownloads) {
+            stopForegroundService()
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -64,13 +73,24 @@ class HyperPulseForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
+        val stopIntent = Intent(this, HyperPulseForegroundService::class.java).apply {
+            action = ACTION_STOP_SERVICE
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            1,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HyperPulse Turbo Downloader ⚡")
             .setContentText("محرك التنزيل السريع نشط في الخلفية • لن يتوقف التحميل عند تصغير التطبيق")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(true)
+            .setOngoing(false) // Allow swipe dismiss if wanted
             .setContentIntent(pendingIntent)
+            .addAction(0, "إغلاق الإشعار ✕", stopPendingIntent)
             .build()
     }
 

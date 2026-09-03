@@ -115,12 +115,13 @@ class MainActivity : FlutterActivity() {
                         result.error("ERR_NOTIF_SETTINGS", e.message, null)
                     }
                 }
-                // MediaScannerConnection: Indexes newly downloaded Video/Audio into Android Gallery
-                "scanMediaFile" -> {
+                // MediaScannerConnection & Public MediaStore Exporter:
+                // Ensures files show up in Android Gallery and File Manager (Download/HyperPulse)
+                "scanMediaFile", "exportToPublicStorage" -> {
                     val filePath = call.argument<String>("filePath")
                     if (!filePath.isNullOrEmpty()) {
-                        scanFileForGallery(filePath)
-                        result.success(true)
+                        val publicPath = exportFileToPublicStorage(filePath)
+                        result.success(publicPath ?: filePath)
                     } else {
                         result.error("INVALID_PATH", "File path cannot be null or empty", null)
                     }
@@ -132,6 +133,14 @@ class MainActivity : FlutterActivity() {
                         moviesDir.mkdirs()
                     }
                     result.success(moviesDir.absolutePath)
+                }
+                // Resolves the public Download/HyperPulse directory
+                "getPublicDownloadsPath" -> {
+                    val dlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "HyperPulse")
+                    if (!dlDir.exists()) {
+                        dlDir.mkdirs()
+                    }
+                    result.success(dlDir.absolutePath)
                 }
                 // Installs downloaded APK file directly with FileProvider
                 "installApk" -> {
@@ -168,69 +177,115 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun scanFileForGallery(filePath: String) {
+    private fun exportFileToPublicStorage(filePath: String): String? {
         try {
             val file = File(filePath)
-            if (file.exists() && file.length() > 0) {
-                val lower = filePath.lowercase()
-                val mimeType = when {
-                    lower.endsWith(".mp4") -> "video/mp4"
-                    lower.endsWith(".mp3") -> "audio/mpeg"
-                    lower.endsWith(".m4a") -> "audio/mp4"
-                    lower.endsWith(".aac") -> "audio/aac"
-                    lower.endsWith(".wav") -> "audio/wav"
-                    lower.endsWith(".flac") -> "audio/flac"
-                    lower.endsWith(".mkv") -> "video/x-matroska"
-                    lower.endsWith(".webm") -> "video/webm"
-                    lower.endsWith(".mov") -> "video/quicktime"
-                    lower.endsWith(".avi") -> "video/x-msvideo"
-                    lower.endsWith(".3gp") -> "video/3gpp"
-                    lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
-                    lower.endsWith(".png") -> "image/png"
-                    lower.endsWith(".webp") -> "image/webp"
-                    else -> "*/*"
-                }
+            if (!file.exists() || file.length() == 0L) return null
 
-                // 1. Android MediaScannerConnection (Official Gallery & Google Photos indexer)
-                MediaScannerConnection.scanFile(
-                    applicationContext,
-                    arrayOf(file.absolutePath),
-                    arrayOf(mimeType)
-                ) { path, uri ->
-                    Log.d("HyperPulse", "MediaScanner indexed: $path -> $uri")
-                }
+            val lower = filePath.lowercase()
+            val isVideo = lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".webm") || lower.endsWith(".mov") || lower.endsWith(".avi") || lower.endsWith(".3gp")
+            val isAudio = lower.endsWith(".mp3") || lower.endsWith(".m4a") || lower.endsWith(".aac") || lower.endsWith(".wav") || lower.endsWith(".flac")
+            val isImage = lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") || lower.endsWith(".webp")
+            val isApk = lower.endsWith(".apk")
 
-                // 2. Legacy Broadcast for instant gallery refresh
+            val mimeType = when {
+                lower.endsWith(".mp4") -> "video/mp4"
+                lower.endsWith(".mkv") -> "video/x-matroska"
+                lower.endsWith(".webm") -> "video/webm"
+                lower.endsWith(".mov") -> "video/quicktime"
+                lower.endsWith(".avi") -> "video/x-msvideo"
+                lower.endsWith(".3gp") -> "video/3gpp"
+                lower.endsWith(".mp3") -> "audio/mpeg"
+                lower.endsWith(".m4a") -> "audio/mp4"
+                lower.endsWith(".aac") -> "audio/aac"
+                lower.endsWith(".wav") -> "audio/wav"
+                lower.endsWith(".flac") -> "audio/flac"
+                lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+                lower.endsWith(".png") -> "image/png"
+                lower.endsWith(".webp") -> "image/webp"
+                lower.endsWith(".apk") -> "application/vnd.android.package-archive"
+                lower.endsWith(".pdf") -> "application/pdf"
+                lower.endsWith(".zip") -> "application/zip"
+                else -> "application/octet-stream"
+            }
+
+            // 1. For APKs and general files: Ensure it exists in the public Download/HyperPulse directory
+            if (isApk || (!isVideo && !isAudio && !isImage)) {
                 try {
-                    val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-                    mediaScanIntent.data = Uri.fromFile(file)
-                    sendBroadcast(mediaScanIntent)
-                } catch (e: Exception) {}
-
-                // 3. Android 10+ (API 29+) MediaStore indexing fallback
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && (mimeType.startsWith("video/") || mimeType.startsWith("audio/") || mimeType.startsWith("image/"))) {
-                    try {
-                        val contentUri = when {
-                            mimeType.startsWith("video/") -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                            mimeType.startsWith("audio/") -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                            else -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                        }
-                        val values = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                            put(MediaStore.MediaColumns.SIZE, file.length())
-                            put(MediaStore.MediaColumns.DATE_ADDED, System.currentTimeMillis() / 1000)
-                            put(MediaStore.MediaColumns.DATE_MODIFIED, System.currentTimeMillis() / 1000)
-                        }
-                        contentResolver.insert(contentUri, values)
-                    } catch (e: Exception) {
-                        Log.d("HyperPulse", "MediaStore insert warning: ${e.message}")
+                    val pubDlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "HyperPulse")
+                    if (!pubDlDir.exists()) {
+                        pubDlDir.mkdirs()
                     }
+                    val pubDestFile = File(pubDlDir, file.name)
+                    if (pubDestFile.absolutePath != file.absolutePath) {
+                        file.copyTo(pubDestFile, overwrite = true)
+                    }
+                    MediaScannerConnection.scanFile(applicationContext, arrayOf(pubDestFile.absolutePath), arrayOf(mimeType), null)
+                    return pubDestFile.absolutePath
+                } catch (e: Exception) {
+                    Log.w("HyperPulse", "Direct copy to public Download notice: ${e.message}")
                 }
             }
+
+            // 2. Android 10+ (API 29+) MediaStore Export for Videos, Audio, Images and Downloads
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    val (contentUri, relativeDir) = when {
+                        isVideo -> Pair(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MOVIES + "/HyperPulse")
+                        isAudio -> Pair(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MUSIC + "/HyperPulse")
+                        isImage -> Pair(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_PICTURES + "/HyperPulse")
+                        else -> Pair(MediaStore.Downloads.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_DOWNLOADS + "/HyperPulse")
+                    }
+
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, relativeDir)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+
+                    val uri = contentResolver.insert(contentUri, values)
+                    if (uri != null) {
+                        contentResolver.openOutputStream(uri)?.use { outStream ->
+                            file.inputStream().use { inStream ->
+                                inStream.copyTo(outStream)
+                            }
+                        }
+                        values.clear()
+                        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        contentResolver.update(uri, values, null, null)
+                        Log.d("HyperPulse", "Successfully exported $mimeType to MediaStore URI: $uri ($relativeDir)")
+                    }
+                } catch (e: Exception) {
+                    Log.w("HyperPulse", "MediaStore copy warning: ${e.message}")
+                }
+            }
+
+            // 3. MediaScannerConnection (Official Android Media Indexer for Gallery)
+            MediaScannerConnection.scanFile(
+                applicationContext,
+                arrayOf(file.absolutePath),
+                arrayOf(mimeType)
+            ) { path, uri ->
+                Log.d("HyperPulse", "MediaScanner indexed: $path -> $uri")
+            }
+
+            // 4. Legacy Broadcast
+            try {
+                val mediaScanIntent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
+                mediaScanIntent.data = Uri.fromFile(file)
+                sendBroadcast(mediaScanIntent)
+            } catch (e: Exception) {}
+
+            return file.absolutePath
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("HyperPulse", "exportFileToPublicStorage failed: ${e.message}")
+            return null
         }
+    }
+
+    private fun scanFileForGallery(filePath: String) {
+        exportFileToPublicStorage(filePath)
     }
 
     private fun startHyperPulseForegroundService() {
@@ -313,6 +368,11 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             // Receiver might not be registered
         }
+        try {
+            if (!HyperPulseForegroundService.hasActiveDownloads) {
+                stopHyperPulseForegroundService()
+            }
+        } catch (e: Exception) {}
         super.onDestroy()
     }
 }

@@ -88,15 +88,40 @@ class AndroidSystemBridge {
   }
 
   /// Tells the Android MediaScannerConnection to index a newly downloaded Video/Audio file
-  /// so that it appears immediately in the Google Photos / Samsung Gallery / Xiaomi Gallery app.
-  static Future<void> scanMediaFile(String filePath) async {
-    if (!Platform.isAndroid) return;
+  /// and exports it to Android MediaStore and Public Download directory so that
+  /// it appears immediately in the Google Photos / Samsung Gallery / Xiaomi Gallery app
+  /// and in the system File Manager (Download/HyperPulse).
+  static Future<String> exportToPublicStorage(String filePath) async {
+    if (!Platform.isAndroid) return filePath;
     try {
-      debugPrint('[AndroidSystemBridge] 🔄 Scanning media file into Android MediaStore: $filePath');
-      await _systemChannel.invokeMethod('scanMediaFile', {'filePath': filePath});
-      debugPrint('[AndroidSystemBridge] ✅ Media file indexed successfully.');
+      debugPrint('[AndroidSystemBridge] 🔄 Exporting file to Public MediaStore & Downloads: $filePath');
+      final String? result = await _systemChannel.invokeMethod<String>(
+        'exportToPublicStorage',
+        {'filePath': filePath},
+      );
+      debugPrint('[AndroidSystemBridge] ✅ File exported successfully: $result');
+      return result ?? filePath;
     } catch (e) {
-      debugPrint('[AndroidSystemBridge] scanMediaFile warning: $e');
+      debugPrint('[AndroidSystemBridge] exportToPublicStorage warning: $e');
+      return filePath;
+    }
+  }
+
+  /// Backward-compatible alias for scanMediaFile
+  static Future<void> scanMediaFile(String filePath) async {
+    await exportToPublicStorage(filePath);
+  }
+
+  /// Resolves the absolute path for `Download/HyperPulse` on Android.
+  static Future<String?> getPublicDownloadsPath() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final String? path =
+          await _systemChannel.invokeMethod<String>('getPublicDownloadsPath');
+      return path;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] getPublicDownloadsPath warning: $e');
+      return null;
     }
   }
 

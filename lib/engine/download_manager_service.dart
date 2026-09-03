@@ -13,6 +13,7 @@ import '../engine/smart_url_filter.dart';
 import '../engine/android_system_bridge.dart';
 import '../engine/audio_extractor_service.dart';
 import '../engine/smart_resume_manager.dart';
+import '../engine/watermark_service.dart';
 
 /// [DownloadManagerService] is the central task manager orchestrating:
 /// 1. Active Downloads Queue with Pause, Resume, Cancel.
@@ -262,6 +263,12 @@ class DownloadManagerService extends ChangeNotifier {
           continue;
         }
 
+        // Never re-add files that belong to currently active or paused tasks
+        final bool isCurrentlyActive = _activeTasks.any((t) => t.fullFilePath == file.path || t.fileName == filename);
+        if (isCurrentlyActive) {
+          continue;
+        }
+
         final bool alreadyExists = _completedTasks.any((t) => t.fullFilePath == file.path);
         if (!alreadyExists) {
           final stat = file.statSync();
@@ -270,16 +277,40 @@ class DownloadManagerService extends ChangeNotifier {
             continue;
           }
 
-          // If APK, verify it is a valid zip/apk container
+          // If APK, verify it is a 100% complete and valid zip/apk container with End of Central Directory
           if (filename.toLowerCase().endsWith('.apk')) {
             try {
-              final headerBytes = file.openSync().readSync(4);
+              final fileLength = file.lengthSync();
+              if (fileLength < 22) continue; // Minimum valid ZIP is 22 bytes
+              final raf = file.openSync();
+              // 1. Verify Local File Header (PK\x03\x04)
+              final headerBytes = raf.readSync(4);
               if (headerBytes.length < 4 ||
                   headerBytes[0] != 0x50 ||
                   headerBytes[1] != 0x4B ||
                   headerBytes[2] != 0x03 ||
                   headerBytes[3] != 0x04) {
-                // Not a valid APK binary, skip
+                raf.closeSync();
+                continue;
+              }
+              // 2. Verify End of Central Directory (PK\x05\x06) in the last 1024 bytes
+              final seekPos = (fileLength - 1024).clamp(0, fileLength);
+              raf.setPositionSync(seekPos);
+              final tailBytes = raf.readSync(fileLength - seekPos);
+              raf.closeSync();
+
+              bool hasEocd = false;
+              for (int i = 0; i <= tailBytes.length - 4; i++) {
+                if (tailBytes[i] == 0x50 &&
+                    tailBytes[i + 1] == 0x4B &&
+                    tailBytes[i + 2] == 0x05 &&
+                    tailBytes[i + 3] == 0x06) {
+                  hasEocd = true;
+                  break;
+                }
+              }
+              if (!hasEocd) {
+                // Incomplete / truncated APK. Do not treat as completed!
                 continue;
               }
             } catch (_) {
@@ -439,9 +470,26 @@ class DownloadManagerService extends ChangeNotifier {
       _subscriptions[task.id]?.cancel();
       _subscriptions.remove(task.id);
 
-      // Trigger MediaScanner for media files
+      // Apply watermark if video
+      if (task.isVideo && File(task.fullFilePath).existsSync()) {
+        try {
+          await WatermarkService().applyWatermarkToVideo(task.fullFilePath);
+        } catch (e) {
+          debugPrint('[DownloadManagerService] Watermark notice: $e');
+        }
+      }
+
+      // Export to Public Storage (Gallery for Videos, Download/HyperPulse for APKs)
       if (File(task.fullFilePath).existsSync()) {
-        await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
+        try {
+          final exportedPath = await AndroidSystemBridge.exportToPublicStorage(task.fullFilePath);
+          if (exportedPath.isNotEmpty && File(exportedPath).existsSync()) {
+            task.destinationDirectory = p.dirname(exportedPath);
+            task.fileName = p.basename(exportedPath);
+          }
+        } catch (e) {
+          debugPrint('[DownloadManagerService] Export to public storage notice: $e');
+        }
       }
 
       // Audio Extraction if requested
@@ -451,7 +499,7 @@ class DownloadManagerService extends ChangeNotifier {
           deleteOriginal: false,
         );
         if (res.success && res.outputPath != null) {
-          await AndroidSystemBridge.scanMediaFile(res.outputPath!);
+          await AndroidSystemBridge.exportToPublicStorage(res.outputPath!);
         }
       }
 

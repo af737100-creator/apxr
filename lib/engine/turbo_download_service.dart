@@ -462,14 +462,40 @@ class TurboDownloadService {
       task.segments.clear();
       task.segments.add(singleSegment);
 
-      final rawByteStream = yt.videos.streamsClient.get(targetStreamInfo);
+      Stream<List<int>> byteStream;
+      try {
+        final directCdnUrl = targetStreamInfo.url.toString();
+        final response = await _dio.get<ResponseBody>(
+          directCdnUrl,
+          options: Options(
+            responseType: ResponseType.stream,
+            followRedirects: true,
+            headers: {
+              'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+              'Referer': 'https://www.youtube.com/',
+              'Accept': '*/*',
+              'Accept-Encoding': 'identity',
+              'Connection': 'keep-alive',
+            },
+          ),
+        );
+        if (response.data?.stream != null) {
+          byteStream = response.data!.stream;
+        } else {
+          byteStream = yt.videos.streamsClient.get(targetStreamInfo);
+        }
+      } catch (_) {
+        byteStream = yt.videos.streamsClient.get(targetStreamInfo);
+      }
+
       final IOSink sink = targetFile.openWrite(mode: FileMode.write);
 
       int bytesDownloadedSinceLastTick = 0;
       DateTime lastSpeedTick = DateTime.now();
 
       try {
-        await for (final List<int> chunkData in rawByteStream) {
+        await for (final List<int> chunkData in byteStream) {
           sink.add(chunkData);
           final int chunkSize = chunkData.length;
 

@@ -140,6 +140,20 @@ class StoragePathResolver {
 
       if (Platform.isAndroid) {
         if (preferPublicDownloads) {
+          // 0. Native Android Bridge Public Downloads (Environment.DIRECTORY_DOWNLOADS/HyperPulse)
+          try {
+            final nativeDownloads = await AndroidSystemBridge.getPublicDownloadsPath();
+            if (nativeDownloads != null && nativeDownloads.isNotEmpty) {
+              final target = Directory(nativeDownloads);
+              if (!await target.exists()) {
+                await target.create(recursive: true);
+              }
+              if (await _isWritable(target.path)) {
+                return target.path;
+              }
+            }
+          } catch (_) {}
+
           // 1. Attempt standard Public Downloads
           try {
             final Directory? downloadsDir = await getDownloadsDirectory();
