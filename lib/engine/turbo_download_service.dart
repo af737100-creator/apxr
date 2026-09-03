@@ -306,8 +306,8 @@ class TurboDownloadService {
         // Auto-repair any .bin or missing extension using magic numbers
         final repairedPath = await ZeroByteShieldEngine.autoRepairFileExtension(task.fullFilePath);
         if (repairedPath != task.fullFilePath) {
-          task.fullFilePath = repairedPath;
           task.fileName = p.basename(repairedPath);
+          task.destinationDirectory = p.dirname(repairedPath);
           debugPrint('[TurboDownloadService] 🔄 Auto-repaired final task name to: ${task.fileName}');
         }
 
@@ -377,8 +377,6 @@ class TurboDownloadService {
         task.sourceUrl = resolved.directDownloadUrl;
         if (resolved.cleanFileName.isNotEmpty) {
           task.fileName = resolved.cleanFileName;
-          task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
-          task.tempFilePath = '${task.fullFilePath}.turbo_part';
         }
       }
     }
@@ -427,8 +425,6 @@ class TurboDownloadService {
           lower.endsWith('.mp4') ||
           lower.endsWith('.mkv')) {
         task.fileName = StoragePathResolver.sanitizeFileName(probedName);
-        task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
-        task.tempFilePath = '${task.fullFilePath}.turbo_part';
       }
     }
     if ((contentType.contains('vnd.android.package-archive') ||
@@ -438,8 +434,6 @@ class TurboDownloadService {
         task.fileName.toLowerCase().endsWith('.bin')) {
       final base = task.fileName.substring(0, task.fileName.length - 4);
       task.fileName = '$base.apk';
-      task.fullFilePath = '${task.destinationDirectory}/${task.fileName}';
-      task.tempFilePath = '${task.fullFilePath}.turbo_part';
     }
 
     if (contentType.contains('text/html') && (task.isApk || task.isVideo || task.isArchive)) {

@@ -16,7 +16,7 @@ enum DownloadStatus {
 /// Comprehensive model holding task metadata, progress, and segment states.
 class DownloadTask {
   final String id;
-  final String sourceUrl;
+  String sourceUrl;
   String fileName;
   String destinationDirectory;
   int totalSizeBytes;
@@ -47,7 +47,20 @@ class DownloadTask {
         createdAt = createdAt ?? DateTime.now();
 
   String get fullFilePath => '$destinationDirectory/$fileName';
+  set fullFilePath(String newPath) {
+    final lastSlash = newPath.lastIndexOf('/');
+    if (lastSlash != -1) {
+      destinationDirectory = newPath.substring(0, lastSlash);
+      fileName = newPath.substring(lastSlash + 1);
+    } else {
+      fileName = newPath;
+    }
+  }
+
   String get tempFilePath => '$destinationDirectory/$fileName.hyperpulse_part';
+  set tempFilePath(String _) {
+    // Getter automatically resolves to $destinationDirectory/$fileName.hyperpulse_part
+  }
 
   String get fileExtension {
     if (fileName.contains('.')) {
