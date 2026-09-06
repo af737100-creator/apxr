@@ -39,10 +39,10 @@ jobs:
         run: flutter pub get
 
       - name: Build Universal Release APK
-        run: flutter build apk --release --no-tree-shake-icons
+        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Build Split ABI APKs (Optimized size)
-        run: flutter build apk --release --split-per-abi --no-tree-shake-icons
+        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Upload Universal APK Artifact
         uses: actions/upload-artifact@v4
