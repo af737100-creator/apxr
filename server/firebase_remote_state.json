@@ -1,0 +1,41 @@
+{
+  "config": {
+    "announcementBanner": "⚡ مرحباً بكم في تحديث HyperPulse Turbo الخارق! تم تفعيل سرعة التحميل القصوى 32 خيطاً مع العلامة المائية الشفافة.",
+    "isAnnouncementActive": true,
+    "forceWatermark": true,
+    "watermarkOpacity": 0.65,
+    "watermarkPosition": "bottom-right",
+    "turboThreadsMultiplier": 16,
+    "maintenanceMode": false,
+    "latestVersionCode": "2.4.0",
+    "apkDownloadUrl": "https://github.com/af737100-creator/apxr/releases"
+  },
+  "notifications": [
+    {
+      "id": "notif_welcome_fcm",
+      "title": "⚡ تم تفعيل غرفة التحكم عن بُعد عبر Firebase بنجاح",
+      "body": "تم ربط مشروع hyperpulse-4f35f بنجاح. أصبحت قادرًا على إرسال إشعارات فورية وبث مباشر لكافة مستخدمي التطبيق بنقرة زر!",
+      "actionUrl": "https://github.com/af737100-creator/apxr",
+      "imageUrl": "",
+      "type": "system",
+      "priority": "high",
+      "receivedAt": "2026-09-06T14:30:00.000Z",
+      "recipientsCount": 2480,
+      "status": "delivered",
+      "isRead": false
+    },
+    {
+      "id": "notif_watermark_update",
+      "title": "🎬 تفعيل العلامة المائية الشفافة الزجاجية",
+      "body": "تم تفعيل ختم أيقونة واسم HyperPulse Turbo بشفافية أنيقة 65% على جميع الفيديوهات المحملة تلقائياً للحفاظ على الهوية!",
+      "actionUrl": "",
+      "imageUrl": "",
+      "type": "feature",
+      "priority": "normal",
+      "receivedAt": "2026-09-06T15:00:00.000Z",
+      "recipientsCount": 2480,
+      "status": "delivered",
+      "isRead": false
+    }
+  ]
+}
