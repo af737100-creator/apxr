@@ -364,4 +364,55 @@ class StoragePathResolver {
       return false;
     }
   }
+
+  /// Proactively creates the complete HyperPulse folder tree on device storage upon app startup
+  static Future<void> initAppStorageDirectories() async {
+    try {
+      if (Platform.isAndroid) {
+        // 1. Native bridge folder generation
+        try {
+          await AndroidSystemBridge.createAppStorageFolders();
+        } catch (_) {}
+
+        // 2. Direct Dart filesystem creation for standard public paths
+        final candidatePaths = [
+          '/storage/emulated/0/Download/HyperPulse',
+          '/storage/emulated/0/Download/HyperPulse/Apps',
+          '/storage/emulated/0/Download/HyperPulse/Videos',
+          '/storage/emulated/0/Download/HyperPulse/Audio',
+          '/storage/emulated/0/Download/HyperPulse/Archives',
+          '/storage/emulated/0/Download/HyperPulse/Documents',
+          '/storage/emulated/0/Movies/HyperPulse',
+          '/storage/emulated/0/Music/HyperPulse',
+        ];
+
+        for (final pth in candidatePaths) {
+          try {
+            final dir = Directory(pth);
+            if (!await dir.exists()) {
+              await dir.create(recursive: true);
+            }
+          } catch (_) {}
+        }
+
+        // 3. Fallback external app directories
+        final extDirs = await getExternalStorageDirectories();
+        if (extDirs != null) {
+          for (final d in extDirs) {
+            final subDirs = ['Apps', 'Videos', 'Audio', 'Archives', 'Documents'];
+            for (final sub in subDirs) {
+              try {
+                final subDir = Directory(p.join(d.path, sub));
+                if (!await subDir.exists()) {
+                  await subDir.create(recursive: true);
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[StoragePathResolver] initAppStorageDirectories error: $e');
+    }
+  }
 }

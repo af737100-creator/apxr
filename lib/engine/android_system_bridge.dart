@@ -169,4 +169,31 @@ class AndroidSystemBridge {
       return false;
     }
   }
+
+  /// Directly requests all runtime and storage permissions on app launch.
+  /// Shows system prompts so user simply taps Allow (سماح).
+  static Future<bool> requestAllAppPermissions() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      debugPrint('[AndroidSystemBridge] 🛡️ Requesting all system permissions on launch...');
+      final bool? result = await _systemChannel.invokeMethod<bool>('requestAllAppPermissions');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] requestAllAppPermissions error: $e');
+      return false;
+    }
+  }
+
+  /// Creates and verifies all public storage folders (Download/HyperPulse, Videos, Audio, Apps, Archives)
+  static Future<bool> createAppStorageFolders() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      debugPrint('[AndroidSystemBridge] 📁 Creating app storage folders immediately...');
+      final bool? result = await _systemChannel.invokeMethod<bool>('createAppStorageFolders');
+      return result ?? false;
+    } catch (e) {
+      debugPrint('[AndroidSystemBridge] createAppStorageFolders error: $e');
+      return false;
+    }
+  }
 }

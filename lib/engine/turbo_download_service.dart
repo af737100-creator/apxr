@@ -18,6 +18,7 @@ import 'smart_resume_manager.dart';
 import 'dual_network_flight_mode.dart';
 import 'android_system_bridge.dart';
 import 'universal_app_store_resolver.dart';
+import 'watermark_service.dart';
 import 'package:path/path.dart' as p;
 
 /// Event dispatched to listeners with real-time download telemetry.
@@ -318,6 +319,16 @@ class TurboDownloadService {
         // Clean up checkpoint on success
         await SmartResumeManager.deleteCheckpoint(task.tempFilePath);
         await SmartResumeManager.deleteCheckpoint(task.fullFilePath);
+
+        // Stamp brand watermark with background and app name on downloaded videos
+        if (task.isVideo && File(task.fullFilePath).existsSync()) {
+          try {
+            debugPrint('[TurboDownloadService] 🎬 Stamping brand watermark badge on video: ${task.fullFilePath}');
+            await WatermarkService().applyWatermarkToVideo(task.fullFilePath);
+          } catch (wmErr) {
+            debugPrint('[TurboDownloadService] Watermarking notice: $wmErr');
+          }
+        }
 
         // Immediate Gallery & MediaStore Indexing
         try {

@@ -254,6 +254,27 @@ async function extractTikTokLoveTik(url: string): Promise<ExtractionResult | nul
 // Instagram, Facebook, Threads, Twitter, Reddit & Universal Extractors
 // -------------------------------------------------------------
 
+// Helper to unpack Dean Edwards packed JavaScript used by SnapSave, SnapInsta, FBDownloader
+function unpackDeanEdwards(packed: string): string {
+  try {
+    const reg = /\}\s*\(\s*(['"])(.*?)\1\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(['"])(.*?)\5\.split\(\s*['"]\|['"]\s*\)/s;
+    const match = packed.match(reg);
+    if (!match) return packed;
+    let p = match[2];
+    const a = parseInt(match[3], 10) || 36;
+    let c = parseInt(match[4], 10) || 0;
+    const k = match[6].split('|');
+    while (c-- > 0) {
+      const token = c.toString(a);
+      const rep = (c < k.length && k[c]) ? k[c] : token;
+      p = p.replace(new RegExp('\\b' + token + '\\b', 'g'), rep);
+    }
+    return p;
+  } catch (_) {
+    return packed;
+  }
+}
+
 // Helper to resolve shortlinks & redirects (fb.watch, facebook.com/share, etc.)
 async function resolveCanonicalUrl(url: string): Promise<string> {
   const lower = url.toLowerCase();
@@ -270,7 +291,7 @@ async function resolveCanonicalUrl(url: string): Promise<string> {
     try {
       const resp = await axios.get(url, {
         maxRedirects: 5,
-        timeout: 3500,
+        timeout: 4000,
         headers: { 'User-Agent': BROWSER_UA },
       });
       if (resp.request?.res?.responseUrl) {
@@ -284,315 +305,515 @@ async function resolveCanonicalUrl(url: string): Promise<string> {
 async function extractInstagramMulti(rawUrl: string): Promise<ExtractionResult | null> {
   const url = await resolveCanonicalUrl(rawUrl);
 
-  // Method 1: SaveClip
-  try {
-    const resp = await axios.post(
-      'https://api.saveclip.app/v1/get',
-      { url },
-      {
-        timeout: 5000,
-        headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' },
-      }
-    );
-
-    if (resp.status === 200 && resp.data?.data?.length > 0) {
-      const first = resp.data.data[0];
-      const directUrl = first.url || first.video_url;
-      if (directUrl && String(directUrl).startsWith('http')) {
-        return {
-          success: true,
-          direct_url: directUrl,
-          title: `Instagram_Media_${Date.now()}`,
-          format: 'mp4',
-          thumbnail: first.thumbnail,
-          provider: 'SaveClip Instagram Engine 📸',
-        };
-      }
-    }
-  } catch (_) {}
-
-  // Method 2: FastDL / SnapInsta scraper
-  try {
-    const params = new URLSearchParams();
-    params.append('q', url);
-    params.append('t', 'media');
-    params.append('lang', 'en');
-
-    const resp = await axios.post('https://v3.fastdl.app/api/convert', params, {
-      timeout: 5000,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    });
-
-    if (resp.status === 200 && resp.data?.html) {
-      const html = resp.data.html;
-      const match = html.match(/href="([^"]+)"[^>]*title="Download Video"/i) ||
-                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
-                    html.match(/class="btn-download[^"]*"[^>]*href="([^"]+)"/i);
-      if (match && match[1]) {
-        return {
-          success: true,
-          direct_url: match[1].replace(/&amp;/g, '&'),
-          title: `Instagram_Reel_${Date.now()}`,
-          format: 'mp4',
-          provider: 'FastDL Instagram Engine ⚡',
-        };
-      }
-    }
-  } catch (_) {}
-
-  // Method 3: SaveIG API
-  try {
-    const params = new URLSearchParams();
-    params.append('q', url);
-    params.append('t', 'media');
-    params.append('lang', 'en');
-
-    const resp = await axios.post('https://saveig.app/api/ajaxSearch', params, {
-      timeout: 4500,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    });
-
-    if (resp.status === 200 && resp.data?.data) {
-      const html = resp.data.data;
-      const match = html.match(/href="([^"]+)"[^>]*download/i) ||
-                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-      if (match && match[1]) {
-        return {
-          success: true,
-          direct_url: match[1].replace(/&amp;/g, '&'),
-          title: `Instagram_Media_${Date.now()}`,
-          format: 'mp4',
-          provider: 'SaveIG Engine 📸',
-        };
-      }
-    }
-  } catch (_) {}
-
-  // Method 4: Instagram Embed Scraper
-  try {
-    const shortcodeMatch = url.match(/instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)/i);
-    if (shortcodeMatch && shortcodeMatch[1]) {
-      const embedUrl = `https://www.instagram.com/p/${shortcodeMatch[1]}/embed/captioned/`;
-      const resp = await axios.get(embedUrl, {
-        timeout: 4500,
-        headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15' },
-      });
-
-      if (resp.status === 200 && resp.data) {
-        const body = String(resp.data);
-        const match = body.match(/"video_url":"([^"]+)"/i) || body.match(/src="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-        if (match && match[1]) {
-          const streamUrl = match[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/\\/g, '');
-          return {
-            success: true,
-            direct_url: streamUrl,
-            title: `Instagram_Reel_${Date.now()}`,
-            format: 'mp4',
-            provider: 'Instagram Embed Stream ⚡',
-          };
+  const racers: Promise<ExtractionResult | null>[] = [
+    // Method 1: SaveClip
+    (async () => {
+      try {
+        const resp = await axios.post(
+          'https://api.saveclip.app/v1/get',
+          { url },
+          { timeout: 4500, headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json' } }
+        );
+        if (resp.status === 200 && resp.data?.data?.length > 0) {
+          const first = resp.data.data[0];
+          const directUrl = first.url || first.video_url;
+          if (directUrl && String(directUrl).startsWith('http')) {
+            return {
+              success: true,
+              direct_url: directUrl,
+              title: `Instagram_Media_${Date.now()}`,
+              format: 'mp4',
+              thumbnail: first.thumbnail,
+              provider: 'SaveClip Instagram Engine 📸',
+            };
+          }
         }
-      }
-    }
-  } catch (_) {}
+      } catch (_) {}
+      return null;
+    })(),
 
-  // Method 5: Direct Instagram GraphQL Public endpoint
+    // Method 2: FastDL / SnapInsta scraper with unpacker
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('q', url);
+        params.append('t', 'media');
+        params.append('lang', 'en');
+
+        const resp = await axios.post('https://v3.fastdl.app/api/convert', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+
+        if (resp.status === 200 && resp.data?.html) {
+          const html = unpackDeanEdwards(resp.data.html);
+          const match = html.match(/href="([^"]+)"[^>]*title="Download Video"/i) ||
+                        html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
+                        html.match(/class="btn-download[^"]*"[^>]*href="([^"]+)"/i) ||
+                        html.match(/href="([^"]+)"[^>]*class="btn-download/i);
+          if (match && match[1]) {
+            return {
+              success: true,
+              direct_url: match[1].replace(/&amp;/g, '&'),
+              title: `Instagram_Reel_${Date.now()}`,
+              format: 'mp4',
+              provider: 'FastDL Instagram Engine ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 3: SaveIG API with unpacker
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('q', url);
+        params.append('t', 'media');
+        params.append('lang', 'en');
+
+        const resp = await axios.post('https://saveig.app/api/ajaxSearch', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+
+        if (resp.status === 200 && resp.data?.data) {
+          const html = unpackDeanEdwards(String(resp.data.data));
+          const match = html.match(/href="([^"]+)"[^>]*download/i) ||
+                        html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+          if (match && match[1]) {
+            return {
+              success: true,
+              direct_url: match[1].replace(/&amp;/g, '&'),
+              title: `Instagram_Media_${Date.now()}`,
+              format: 'mp4',
+              provider: 'SaveIG Engine 📸',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 4: Instagram Embed Scraper
+    (async () => {
+      try {
+        const shortcodeMatch = url.match(/instagram\.com\/(?:p|reel|reels)\/([A-Za-z0-9_-]+)/i);
+        if (shortcodeMatch && shortcodeMatch[1]) {
+          const embedUrl = `https://www.instagram.com/p/${shortcodeMatch[1]}/embed/captioned/`;
+          const resp = await axios.get(embedUrl, {
+            timeout: 4000,
+            headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15' },
+          });
+
+          if (resp.status === 200 && resp.data) {
+            const body = String(resp.data);
+            const match = body.match(/"video_url":"([^"]+)"/i) || body.match(/src="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+            if (match && match[1]) {
+              const streamUrl = match[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/\\/g, '');
+              return {
+                success: true,
+                direct_url: streamUrl,
+                title: `Instagram_Reel_${Date.now()}`,
+                format: 'mp4',
+                provider: 'Instagram Embed Stream ⚡',
+              };
+            }
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 5: Direct Instagram GraphQL Public endpoint
+    (async () => {
+      try {
+        let cleanIgUrl = url.split('?')[0];
+        if (!cleanIgUrl.endsWith('/')) cleanIgUrl += '/';
+        const jsonUrl = `${cleanIgUrl}?__a=1&__d=dis`;
+
+        const resp = await axios.get(jsonUrl, {
+          timeout: 4000,
+          headers: {
+            'User-Agent': MOBILE_UA,
+            'Sec-Fetch-Site': 'same-origin',
+            Accept: '*/*',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const items = resp.data.graphql?.shortcode_media || resp.data.items?.[0];
+          const videoUrl = items?.video_url || items?.video_versions?.[0]?.url;
+          if (videoUrl) {
+            return {
+              success: true,
+              direct_url: videoUrl,
+              title: `Instagram_${Date.now()}`,
+              format: 'mp4',
+              thumbnail: items?.display_url,
+              provider: 'Instagram Direct CDN ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 6: SnapInsta direct action with unpacker
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('url', url);
+        const resp = await axios.post('https://snapinsta.app/action.php', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          },
+        });
+        if (resp.status === 200 && resp.data) {
+          const body = unpackDeanEdwards(String(resp.data));
+          const match = body.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
+                        body.match(/class="btn-download[^"]*"[^>]*href="([^"]+)"/i);
+          if (match && match[1]) {
+            return {
+              success: true,
+              direct_url: match[1].replace(/&amp;/g, '&'),
+              title: `Instagram_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'SnapInsta Engine 📸',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+  ];
+
   try {
-    let cleanIgUrl = url.split('?')[0];
-    if (!cleanIgUrl.endsWith('/')) cleanIgUrl += '/';
-    const jsonUrl = `${cleanIgUrl}?__a=1&__d=dis`;
-
-    const resp = await axios.get(jsonUrl, {
-      timeout: 4000,
-      headers: {
-        'User-Agent': MOBILE_UA,
-        'Sec-Fetch-Site': 'same-origin',
-        Accept: '*/*',
-      },
-    });
-
-    if (resp.status === 200 && resp.data) {
-      const items = resp.data.graphql?.shortcode_media || resp.data.items?.[0];
-      const videoUrl = items?.video_url || items?.video_versions?.[0]?.url;
-      if (videoUrl) {
-        return {
-          success: true,
-          direct_url: videoUrl,
-          title: `Instagram_${Date.now()}`,
-          format: 'mp4',
-          thumbnail: items?.display_url,
-          provider: 'Instagram Direct CDN ⚡',
-        };
-      }
-    }
-  } catch (_) {}
-
-  return null;
+    return await Promise.any(
+      racers.map(p => p.then(res => {
+        if (res && res.success && res.direct_url) return res;
+        throw new Error('IG Not resolved');
+      }))
+    );
+  } catch (_) {
+    return null;
+  }
 }
 
 async function extractFacebookMulti(rawUrl: string): Promise<ExtractionResult | null> {
   const url = await resolveCanonicalUrl(rawUrl);
 
-  // Method 1: SnapSave / FBDownloader API
+  const racers: Promise<ExtractionResult | null>[] = [
+    // Method 1: SnapSave / FBDownloader API with Dean Edwards Unpacker
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('url', url);
+
+        const resp = await axios.post('https://snapsave.app/action.php?lang=en', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
+          const body = unpackDeanEdwards(raw);
+          const match = body.match(/href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success/i) ||
+                        body.match(/href="([^"]+)"[^>]*class="button is-success/i) ||
+                        body.match(/(https:\/\/[^"'\\]+\.mp4[^"'\\]*)/i);
+          if (match && match[1]) {
+            let streamUrl = match[1].replace(/\\/g, '').replace(/&amp;/g, '&');
+            return {
+              success: true,
+              direct_url: streamUrl,
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'SnapSave Facebook HD ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 2: FBDownloader Ajax API with Unpacker
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('q', url);
+        params.append('t', 'media');
+        params.append('lang', 'en');
+
+        const resp = await axios.post('https://fbdownloader.to/api/ajaxSearch', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+
+        if (resp.status === 200 && resp.data?.data) {
+          const html = unpackDeanEdwards(String(resp.data.data));
+          const match = html.match(/href="([^"]+)"[^>]*class="button[^"]*is-success/i) ||
+                        html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+          if (match && match[1]) {
+            return {
+              success: true,
+              direct_url: match[1].replace(/&amp;/g, '&'),
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'FBDownloader Engine ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 3: FDown Parser
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('url', url);
+
+        const resp = await axios.post('https://fdown.net/download.php', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const body = resp.data.toString();
+          const hdMatch = body.match(/id="hd"[\s\S]*?href="([^"]+)"/i);
+          const sdMatch = body.match(/id="sd"[\s\S]*?href="([^"]+)"/i);
+          const streamUrl = hdMatch?.[1] || sdMatch?.[1];
+
+          if (streamUrl && streamUrl.startsWith('http')) {
+            return {
+              success: true,
+              direct_url: streamUrl.replace(/&amp;/g, '&'),
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'FDown Facebook Engine ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 4: GetFVid Parser
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('url', url);
+
+        const resp = await axios.post('https://www.getfvid.com/downloader', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const html = resp.data.toString();
+          const hdMatch = html.match(/href="([^"]+)"[^>]*class="btn btn-download[^"]*"/i) ||
+                          html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
+          if (hdMatch && hdMatch[1]) {
+            return {
+              success: true,
+              direct_url: hdMatch[1].replace(/&amp;/g, '&'),
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'GetFVid Facebook Engine ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 5: GetMyFB API
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.append('id-url', url);
+
+        const resp = await axios.post('https://getmyfb.com/process', params, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'X-Requested-With': 'XMLHttpRequest',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const html = String(resp.data);
+          const match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
+                        html.match(/href="([^"]+)"[^>]*class="results-list__download/i);
+          if (match && match[1]) {
+            return {
+              success: true,
+              direct_url: match[1].replace(/&amp;/g, '&'),
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'GetMyFB Engine ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+
+    // Method 6: FB Video Mobile HTML Scraper
+    (async () => {
+      try {
+        let mobileUrl = url.replace('www.facebook.com', 'm.facebook.com').replace('web.facebook.com', 'm.facebook.com');
+        const resp = await axios.get(mobileUrl, {
+          timeout: 4500,
+          headers: {
+            'User-Agent': MOBILE_UA,
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+        });
+
+        if (resp.status === 200 && resp.data) {
+          const html = resp.data.toString();
+          const hdMatch = html.match(/"playable_url_quality_hd":"([^"]+)"/i) || html.match(/"browser_native_hd_url":"([^"]+)"/i);
+          const sdMatch = html.match(/"playable_url":"([^"]+)"/i) || html.match(/"browser_native_sd_url":"([^"]+)"/i) || html.match(/"sd_src":"([^"]+)"/i);
+          let streamUrl = hdMatch?.[1] || sdMatch?.[1];
+
+          if (streamUrl) {
+            streamUrl = streamUrl.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/\\/g, '');
+            return {
+              success: true,
+              direct_url: streamUrl,
+              title: `Facebook_Video_${Date.now()}`,
+              format: 'mp4',
+              provider: 'Facebook Direct Stream ⚡',
+            };
+          }
+        }
+      } catch (_) {}
+      return null;
+    })(),
+  ];
+
   try {
-    const params = new URLSearchParams();
-    params.append('url', url);
+    return await Promise.any(
+      racers.map(p => p.then(res => {
+        if (res && res.success && res.direct_url) return res;
+        throw new Error('FB Not resolved');
+      }))
+    );
+  } catch (_) {
+    return null;
+  }
+}
 
-    const resp = await axios.post('https://snapsave.app/action.php?lang=en', params, {
-      timeout: 5000,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    });
+// -------------------------------------------------------------
+// Twitter / X Parallel Multi-Engine Extractors
+// -------------------------------------------------------------
 
-    if (resp.status === 200 && resp.data) {
-      const body = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data);
-      const match = body.match(/href=\\"([^\\"]+)\\"[^>]*class=\\"button is-success/i) ||
-                    body.match(/(https:\/\/[^"'\\]+\.mp4[^"'\\]*)/i);
-      if (match && match[1]) {
-        let streamUrl = match[1].replace(/\\/g, '').replace(/&amp;/g, '&');
-        return {
-          success: true,
-          direct_url: streamUrl,
-          title: `Facebook_Video_${Date.now()}`,
-          format: 'mp4',
-          provider: 'SnapSave Facebook HD ⚡',
-        };
-      }
-    }
-  } catch (_) {}
+function extractTwitterTweetId(url: string): string | null {
+  const match = url.match(/(?:twitter\.com|x\.com)\/(?:[^\/]+)\/status(?:es)?\/(\d+)/i);
+  return match ? match[1] : null;
+}
 
-  // Method 2: FBDownloader Ajax API
+async function extractTwitterVx(url: string): Promise<ExtractionResult | null> {
+  const tweetId = extractTwitterTweetId(url);
+  if (!tweetId) return null;
+
   try {
-    const params = new URLSearchParams();
-    params.append('q', url);
-    params.append('t', 'media');
-    params.append('lang', 'en');
-
-    const resp = await axios.post('https://fbdownloader.to/api/ajaxSearch', params, {
+    const resp = await axios.get(`https://api.vxtwitter.com/Twitter/status/${tweetId}`, {
       timeout: 4500,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    });
-
-    if (resp.status === 200 && resp.data?.data) {
-      const html = String(resp.data.data);
-      const match = html.match(/href="([^"]+)"[^>]*class="button[^"]*is-success/i) ||
-                    html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-      if (match && match[1]) {
-        return {
-          success: true,
-          direct_url: match[1].replace(/&amp;/g, '&'),
-          title: `Facebook_Video_${Date.now()}`,
-          format: 'mp4',
-          provider: 'FBDownloader Engine ⚡',
-        };
-      }
-    }
-  } catch (_) {}
-
-  // Method 3: FDown / Getfvid Parser
-  try {
-    const params = new URLSearchParams();
-    params.append('url', url);
-
-    const resp = await axios.post('https://fdown.net/download.php', params, {
-      timeout: 5000,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'User-Agent': BROWSER_UA },
     });
 
     if (resp.status === 200 && resp.data) {
-      const body = resp.data.toString();
-      const hdMatch = body.match(/id="hd"[\s\S]*?href="([^"]+)"/i);
-      const sdMatch = body.match(/id="sd"[\s\S]*?href="([^"]+)"/i);
-      const streamUrl = hdMatch?.[1] || sdMatch?.[1];
-
-      if (streamUrl && streamUrl.startsWith('http')) {
-        return {
-          success: true,
-          direct_url: streamUrl.replace(/&amp;/g, '&'),
-          title: `Facebook_Video_${Date.now()}`,
-          format: 'mp4',
-          provider: 'FDown Facebook Engine ⚡',
-        };
+      const data = resp.data;
+      const mediaList = data.media_extended || [];
+      for (const m of mediaList) {
+        if (m.type === 'video' || m.type === 'gif') {
+          return {
+            success: true,
+            direct_url: m.url,
+            title: (data.text || `Twitter_X_${tweetId}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60),
+            format: 'mp4',
+            thumbnail: m.thumbnail_url,
+            duration: m.duration_millis ? Math.round(m.duration_millis / 1000) : undefined,
+            provider: 'VxTwitter API Engine ⚡',
+          };
+        }
+      }
+      // Check mediaURLs
+      if (data.mediaURLs && Array.isArray(data.mediaURLs)) {
+        for (const u of data.mediaURLs) {
+          if (String(u).includes('.mp4')) {
+            return {
+              success: true,
+              direct_url: u,
+              title: (data.text || `Twitter_X_${tweetId}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60),
+              format: 'mp4',
+              provider: 'VxTwitter Video Stream ⚡',
+            };
+          }
+        }
       }
     }
   } catch (_) {}
+  return null;
+}
 
-  // Method 4: GetFVid Parser
+async function extractTwitterFx(url: string): Promise<ExtractionResult | null> {
+  const tweetId = extractTwitterTweetId(url);
+  if (!tweetId) return null;
+
   try {
-    const params = new URLSearchParams();
-    params.append('url', url);
-
-    const resp = await axios.post('https://www.getfvid.com/downloader', params, {
+    const resp = await axios.get(`https://api.fxtwitter.com/status/${tweetId}`, {
       timeout: 4500,
-      headers: {
-        'User-Agent': BROWSER_UA,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+      headers: { 'User-Agent': BROWSER_UA },
     });
 
-    if (resp.status === 200 && resp.data) {
-      const html = resp.data.toString();
-      const hdMatch = html.match(/href="([^"]+)"[^>]*class="btn btn-download[^"]*"/i) ||
-                      html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i);
-      if (hdMatch && hdMatch[1]) {
-        return {
-          success: true,
-          direct_url: hdMatch[1].replace(/&amp;/g, '&'),
-          title: `Facebook_Video_${Date.now()}`,
-          format: 'mp4',
-          provider: 'GetFVid Facebook Engine ⚡',
-        };
+    if (resp.status === 200 && resp.data?.tweet) {
+      const tweet = resp.data.tweet;
+      const videos = tweet.media?.videos;
+      if (videos && Array.isArray(videos) && videos.length > 0) {
+        const v = videos[0];
+        const directUrl = v.url || (v.variants && v.variants[0]?.url);
+        if (directUrl) {
+          return {
+            success: true,
+            direct_url: directUrl,
+            title: (tweet.text || `Twitter_X_${tweetId}`).replace(/[\\/:*?"<>|]/g, '_').slice(0, 60),
+            format: 'mp4',
+            thumbnail: v.thumbnail_url,
+            provider: 'FxTwitter API Engine ⚡',
+          };
+        }
       }
     }
   } catch (_) {}
-
-  // Method 5: FB Video Mobile HTML scraper
-  try {
-    let mobileUrl = url.replace('www.facebook.com', 'm.facebook.com').replace('web.facebook.com', 'm.facebook.com');
-    const resp = await axios.get(mobileUrl, {
-      timeout: 4500,
-      headers: {
-        'User-Agent': MOBILE_UA,
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-
-    if (resp.status === 200 && resp.data) {
-      const html = resp.data.toString();
-      const hdMatch = html.match(/"playable_url_quality_hd":"([^"]+)"/i) || html.match(/"browser_native_hd_url":"([^"]+)"/i);
-      const sdMatch = html.match(/"playable_url":"([^"]+)"/i) || html.match(/"browser_native_sd_url":"([^"]+)"/i) || html.match(/"sd_src":"([^"]+)"/i);
-      let streamUrl = hdMatch?.[1] || sdMatch?.[1];
-
-      if (streamUrl) {
-        streamUrl = streamUrl.replace(/\\\//g, '/').replace(/\\u0026/g, '&').replace(/\\/g, '');
-        return {
-          success: true,
-          direct_url: streamUrl,
-          title: `Facebook_Video_${Date.now()}`,
-          format: 'mp4',
-          provider: 'Facebook Direct Stream ⚡',
-        };
-      }
-    }
-  } catch (_) {}
-
   return null;
 }
 
@@ -600,7 +821,7 @@ async function extractTwitterTwitsave(url: string): Promise<ExtractionResult | n
   try {
     const resp = await axios.get('https://twitsave.com/info', {
       params: { url },
-      timeout: 5000,
+      timeout: 4500,
       headers: { 'User-Agent': BROWSER_UA },
     });
 
@@ -618,6 +839,60 @@ async function extractTwitterTwitsave(url: string): Promise<ExtractionResult | n
     }
   } catch (_) {}
   return null;
+}
+
+async function extractTwitterSSSTwitter(url: string): Promise<ExtractionResult | null> {
+  try {
+    const params = new URLSearchParams();
+    params.append('id', url);
+    params.append('locale', 'en');
+
+    const resp = await axios.post('https://ssstwitter.com/', params, {
+      timeout: 4500,
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      },
+    });
+
+    if (resp.status === 200 && resp.data) {
+      const html = String(resp.data);
+      const match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/i) ||
+                    html.match(/href="([^"]+)"[^>]*class="pure-button/i);
+      if (match && match[1]) {
+        return {
+          success: true,
+          direct_url: match[1].replace(/&amp;/g, '&'),
+          title: `Twitter_X_Video_${Date.now()}`,
+          format: 'mp4',
+          provider: 'SSSTwitter Engine ⚡',
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
+async function extractTwitterMulti(url: string): Promise<ExtractionResult | null> {
+  const canonicalUrl = await resolveCanonicalUrl(url);
+
+  const racers = [
+    extractTwitterVx(canonicalUrl),
+    extractTwitterFx(canonicalUrl),
+    extractTwitterTwitsave(canonicalUrl),
+    extractTwitterSSSTwitter(canonicalUrl),
+  ];
+
+  try {
+    return await Promise.any(
+      racers.map(p => p.then(res => {
+        if (res && res.success && res.direct_url) return res;
+        throw new Error('Twitter Not resolved');
+      }))
+    );
+  } catch (_) {
+    return null;
+  }
 }
 
 // Universal All-In-One Downloader (Pinterest, Reddit, Threads, Snapchat, Dailymotion, Vimeo)
@@ -839,40 +1114,64 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
   // 3. DEDICATED INSTAGRAM ENGINE RACE
   if (lower.includes('instagram.com')) {
     console.log(`[UniversalExtractor] 📸 Launching Instagram Multi Engine for: ${cleanUrl}`);
-    const igResult = await extractInstagramMulti(cleanUrl);
-    if (igResult && igResult.direct_url) return igResult;
-
-    const cobaltResult = await extractCobalt(cleanUrl);
-    if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
-
-    const universal = await extractUniversalSocialMulti(cleanUrl);
-    if (universal && universal.direct_url) return universal;
+    const igRacers = [
+      extractInstagramMulti(cleanUrl),
+      extractCobalt(cleanUrl),
+      extractUniversalSocialMulti(cleanUrl),
+    ];
+    try {
+      const winner = await Promise.any(
+        igRacers.map((p) =>
+          p.then((res) => {
+            if (res && res.success && res.direct_url) return res;
+            throw new Error('IG Not resolved');
+          })
+        )
+      );
+      if (winner && winner.direct_url) return winner;
+    } catch (_) {}
   }
 
   // 4. DEDICATED FACEBOOK ENGINE RACE
   if (lower.includes('facebook.com') || lower.includes('fb.watch') || lower.includes('fb.com')) {
     console.log(`[UniversalExtractor] 📘 Launching Facebook Multi Engine for: ${cleanUrl}`);
-    const fbResult = await extractFacebookMulti(cleanUrl);
-    if (fbResult && fbResult.direct_url) return fbResult;
-
-    const cobaltResult = await extractCobalt(cleanUrl);
-    if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
-
-    const universal = await extractUniversalSocialMulti(cleanUrl);
-    if (universal && universal.direct_url) return universal;
+    const fbRacers = [
+      extractFacebookMulti(cleanUrl),
+      extractCobalt(cleanUrl),
+      extractUniversalSocialMulti(cleanUrl),
+    ];
+    try {
+      const winner = await Promise.any(
+        fbRacers.map((p) =>
+          p.then((res) => {
+            if (res && res.success && res.direct_url) return res;
+            throw new Error('FB Not resolved');
+          })
+        )
+      );
+      if (winner && winner.direct_url) return winner;
+    } catch (_) {}
   }
 
   // 5. DEDICATED TWITTER / X ENGINE
   if (lower.includes('twitter.com') || lower.includes('x.com')) {
     console.log(`[UniversalExtractor] 🐦 Launching Twitter/X Engine for: ${cleanUrl}`);
-    const twResult = await extractTwitterTwitsave(cleanUrl);
-    if (twResult && twResult.direct_url) return twResult;
-
-    const cobaltResult = await extractCobalt(cleanUrl);
-    if (cobaltResult && cobaltResult.direct_url) return cobaltResult;
-
-    const universal = await extractUniversalSocialMulti(cleanUrl);
-    if (universal && universal.direct_url) return universal;
+    const twRacers = [
+      extractTwitterMulti(cleanUrl),
+      extractCobalt(cleanUrl),
+      extractUniversalSocialMulti(cleanUrl),
+    ];
+    try {
+      const winner = await Promise.any(
+        twRacers.map((p) =>
+          p.then((res) => {
+            if (res && res.success && res.direct_url) return res;
+            throw new Error('Twitter Not resolved');
+          })
+        )
+      );
+      if (winner && winner.direct_url) return winner;
+    } catch (_) {}
   }
 
   // 6. GENERAL ALL-PLATFORM SOCIAL ENGINE (Threads, Snapchat, Reddit, Pinterest, Vimeo, Dailymotion, etc.)

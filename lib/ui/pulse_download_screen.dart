@@ -16,6 +16,7 @@ import '../engine/cloud_extractor_service.dart';
 import '../engine/smart_download_catcher.dart';
 import '../engine/android_system_bridge.dart';
 import '../engine/download_manager_service.dart';
+import '../engine/watermark_service.dart';
 import '../utils/error_handler.dart';
 import 'components/overlay_bubble_widget.dart';
 import 'smart_stealth_browser.dart';
@@ -127,6 +128,14 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         _floatingLink = detectedLink;
       });
       HapticFeedback.mediumImpact();
+    });
+
+    // Request all system permissions directly on app open (Allow, Allow prompt)
+    // and pre-create public storage folders immediately
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await AndroidSystemBridge.requestAllAppPermissions();
+      await AndroidSystemBridge.createAppStorageFolders();
+      await StoragePathResolver.initAppStorageDirectories();
     });
 
     // Check system permissions and directory
@@ -271,6 +280,13 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     });
 
     HapticFeedback.heavyImpact();
+
+    // Stamp watermark with background and app name if video
+    if (_isVideo && _targetFilePath != null && File(_targetFilePath!).existsSync()) {
+      try {
+        await WatermarkService().applyWatermarkToVideo(_targetFilePath!);
+      } catch (_) {}
+    }
 
     // Trigger MediaScanner for Gallery/Photos indexation
     if (_targetFilePath != null && File(_targetFilePath!).existsSync()) {

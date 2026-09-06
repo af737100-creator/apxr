@@ -39,6 +39,9 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Ensure app storage folder tree exists immediately upon launch
+        createAppStorageFolders()
+
         // 1. Foreground Service Channel
         serviceMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SERVICE_CHANNEL)
         serviceMethodChannel?.setMethodCallHandler { call, result ->
@@ -64,6 +67,17 @@ class MainActivity : FlutterActivity() {
         systemMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_CHANNEL)
         systemMethodChannel?.setMethodCallHandler { call, result ->
             when (call.method) {
+                // Request all system permissions directly on app launch (Allow, Allow)
+                "requestAllAppPermissions" -> {
+                    val requested = requestAllAppPermissions()
+                    createAppStorageFolders()
+                    result.success(requested)
+                }
+                // Pre-create public and categorized download folders immediately
+                "createAppStorageFolders" -> {
+                    val created = createAppStorageFolders()
+                    result.success(created)
+                }
                 // Check if Draw Over Other Apps (SYSTEM_ALERT_WINDOW) is granted
                 "canDrawOverlays" -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -367,6 +381,100 @@ class MainActivity : FlutterActivity() {
             true
         } catch (e: Exception) {
             e.printStackTrace()
+            false
+        }
+    }
+
+    private val RUNTIME_PERMISSIONS_CODE = 9912
+
+    private fun requestAllAppPermissions(): Boolean {
+        return try {
+            val permissionsToRequest = mutableListOf<String>()
+
+            // 1. Android 13+ (API 33+) Media & Notification permissions
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS)
+                }
+                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_VIDEO)
+                }
+                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_AUDIO)
+                }
+                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_IMAGES)
+                }
+            } else {
+                // 2. Android 12 and below storage permissions
+                if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissionsToRequest.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                }
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+                    if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        permissionsToRequest.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    }
+                }
+            }
+
+            // Pop up native system dialogs for user to tap "Allow" (سماح)
+            if (permissionsToRequest.isNotEmpty()) {
+                requestPermissions(permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
+            }
+
+            // Android 11+ (API 30+) Scoped Storage / All Files access
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                if (!Environment.isExternalStorageManager()) {
+                    try {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                        try {
+                            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                            startActivity(intent)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Log.e("MainActivity", "requestAllAppPermissions error: ${e.message}")
+            false
+        }
+    }
+
+    private fun createAppStorageFolders(): Boolean {
+        return try {
+            val downloadPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val hpDownload = File(downloadPublic, "HyperPulse")
+
+            val moviesPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
+            val hpMovies = File(moviesPublic, "HyperPulse")
+
+            val musicPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+            val hpMusic = File(musicPublic, "HyperPulse")
+
+            val directoriesToEnsure = listOf(
+                hpDownload,
+                File(hpDownload, "Apps"),
+                File(hpDownload, "Videos"),
+                File(hpDownload, "Audio"),
+                File(hpDownload, "Archives"),
+                File(hpDownload, "Documents"),
+                hpMovies,
+                hpMusic
+            )
+
+            for (dir in directoriesToEnsure) {
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Log.e("MainActivity", "createAppStorageFolders error: ${e.message}")
             false
         }
     }

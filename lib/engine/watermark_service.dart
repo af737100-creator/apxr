@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
@@ -16,13 +18,13 @@ class WatermarkConfig {
     this.isEnabled = true,
     this.appName = 'HyperPulse Turbo',
     this.logoIconText = '⚡',
-    this.opacity = 0.65,
+    this.opacity = 0.85,
     this.position = 'bottom-right',
   });
 }
 
-/// [WatermarkService] applies a clean, non-intrusive, semi-transparent
-/// copyright watermark badge to downloaded media videos using FFmpegKit.
+/// [WatermarkService] applies a clean, stylish, semi-transparent
+/// copyright watermark badge with a background and the app name to downloaded media videos.
 class WatermarkService {
   static final WatermarkService _instance = WatermarkService._internal();
   factory WatermarkService() => _instance;
@@ -30,6 +32,15 @@ class WatermarkService {
 
   WatermarkConfig _config = const WatermarkConfig();
   WatermarkConfig get config => _config;
+
+  static const String _fallbackBadgeBase64 =
+      'iVBORw0KGgoAAAANSUhEUgAAAPAAAAA0CAYAAAC0LLUwAAABCUlEQVR4nO3dMQqDQBRF'
+      'UVeQIlV2le1nBdlGQgpBGNAxxMx/ch6cfprLKBZOk5mZmQXsdZ+ewDEECyciXDiBXfFe'
+      'rtcHUEv3zTv6oECr6yYWMNS0GfD8vD36oEBr831YwFCXgCGYgCHYasDLb06jDwq0Vr8L'
+      'CxhqEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAE'
+      'EzAEEzAEEzAEEzAEEzAEEzAEEzAEEzAEWw148nMzKG01XgFDbQKGYAKGYJsBzxGPPijQ'
+      '2oxXwFBXV8CfjT4o0OqKd3kTAzXsilfIUMPX4Qoa/u/nwZqZmdkBewPCHGR8AUVCAAAA'
+      'AElFTkSuQmCC';
 
   void updateConfig({
     bool? isEnabled,
@@ -45,23 +56,40 @@ class WatermarkService {
     );
   }
 
-  /// Stamping metadata/watermark overlay string for FFmpeg
+  /// Ensures a badge PNG with dark background and border exists in temporary storage
+  Future<String?> _ensureBadgePng() async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final badgeFile = File(p.join(tempDir.path, 'hyperpulse_watermark_badge.png'));
+      if (!await badgeFile.exists() || (await badgeFile.length()) < 50) {
+        final bytes = base64Decode(_fallbackBadgeBase64);
+        await badgeFile.writeAsBytes(bytes);
+      }
+      return badgeFile.path;
+    } catch (e) {
+      debugPrint('[WatermarkService] Could not write badge PNG: $e');
+      return null;
+    }
+  }
+
+  /// Stamping metadata/watermark filter string for FFmpeg drawtext
   String generateFFmpegFilterCommand({String? customFontFile}) {
     final opacity = _config.opacity.clamp(0.1, 1.0);
-    // Sanitize app name to avoid FFmpeg command injection / escaping errors
     final cleanAppName = _config.appName.replaceAll("'", '').replaceAll(':', ' -');
     
+    // Draw text with prominent dark background box, border, and bright white text
     if (customFontFile != null && customFontFile.isNotEmpty) {
-      return "drawtext=fontfile='$customFontFile':text='$cleanAppName':fontsize=20:fontcolor=white@$opacity:box=1:boxcolor=black@0.45:boxborderw=8:x=w-tw-24:y=h-th-24";
+      final escapedFont = customFontFile.replaceAll(':', r'\:');
+      return "drawtext=fontfile='$escapedFont':text='⚡ $cleanAppName':fontsize=20:fontcolor=white@$opacity:box=1:boxcolor=black@0.65:boxborderw=10:x=w-tw-24:y=h-th-24";
     }
     
-    return "drawtext=text='$cleanAppName':fontsize=20:fontcolor=white@$opacity:box=1:boxcolor=black@0.45:boxborderw=8:x=w-tw-24:y=h-th-24";
+    return "drawtext=text='⚡ $cleanAppName':fontsize=20:fontcolor=white@$opacity:box=1:boxcolor=black@0.65:boxborderw=10:x=w-tw-24:y=h-th-24";
   }
 
   /// Checks if file is a candidate for watermarking
   bool canApplyWatermark(String filePath) {
     final lower = filePath.toLowerCase();
-    return _config.isEnabled && (lower.endsWith('.mp4') || lower.endsWith('.mkv') || lower.endsWith('.mov'));
+    return _config.isEnabled && (lower.endsWith('.mp4') || lower.endsWith('.mkv') || lower.endsWith('.mov') || lower.endsWith('.webm'));
   }
 
   /// Finds an existing standard Android system font for FFmpeg drawtext
@@ -83,7 +111,7 @@ class WatermarkService {
     return null;
   }
 
-  /// Statically applies the semi-transparent brand watermark on the downloaded video
+  /// Applies the brand watermark badge with background box and app name onto the video
   Future<bool> applyWatermarkToVideo(String videoFilePath) async {
     if (!_config.isEnabled || !canApplyWatermark(videoFilePath)) {
       return false;
@@ -97,25 +125,46 @@ class WatermarkService {
     final baseName = p.basenameWithoutExtension(videoFilePath);
     final tempWatermarkedPath = p.join(dir, '${baseName}_wm_temp$ext');
 
+    final badgePng = await _ensureBadgePng();
     final systemFont = findAndroidSystemFont();
-    debugPrint('[WatermarkService] ⚡ Preparing watermark for: $videoFilePath (System font: $systemFont)');
+    debugPrint('[WatermarkService] ⚡ Stamping watermark with background & app name for: $videoFilePath');
 
-    // List of fallback filter configurations to guarantee watermark success
-    final filterAttempts = <String>[];
-    if (systemFont != null) {
-      filterAttempts.add(generateFFmpegFilterCommand(customFontFile: systemFont));
+    // Build ordered list of commands to try
+    final commandsToTry = <String>[];
+
+    // Method 1: Overlay badge PNG with background box + drawtext
+    if (badgePng != null && File(badgePng).existsSync()) {
+      commandsToTry.add(
+        '-y -i "$videoFilePath" -i "$badgePng" -filter_complex "[0:v][1:v]overlay=W-w-24:H-h-24,drawtext=text=\'⚡ ${_config.appName}\':fontsize=18:fontcolor=white:x=W-24-w+16:y=H-24-h+14" -c:v libx264 -preset ultrafast -crf 22 -c:a copy "$tempWatermarkedPath"',
+      );
+      // Simpler overlay without inner drawtext (pure badge)
+      commandsToTry.add(
+        '-y -i "$videoFilePath" -i "$badgePng" -filter_complex "[0:v][1:v]overlay=W-w-24:H-h-24" -c:v libx264 -preset ultrafast -crf 22 -c:a copy "$tempWatermarkedPath"',
+      );
     }
-    filterAttempts.add(generateFFmpegFilterCommand());
-    filterAttempts.add("drawbox=x=w-160:y=h-48:w=140:h=36:color=black@0.5:t=fill");
 
-    for (int i = 0; i < filterAttempts.length; i++) {
-      final currentFilter = filterAttempts[i];
+    // Method 2: drawtext with box=1 (black@0.65 background box, 10px border padding, white text)
+    if (systemFont != null) {
+      final f1 = generateFFmpegFilterCommand(customFontFile: systemFont);
+      commandsToTry.add(
+        '-y -i "$videoFilePath" -vf "$f1" -c:v libx264 -preset ultrafast -crf 22 -c:a copy "$tempWatermarkedPath"',
+      );
+    }
+    final f2 = generateFFmpegFilterCommand();
+    commandsToTry.add(
+      '-y -i "$videoFilePath" -vf "$f2" -c:v libx264 -preset ultrafast -crf 22 -c:a copy "$tempWatermarkedPath"',
+    );
+
+    // Method 3: drawbox fallback
+    commandsToTry.add(
+      '-y -i "$videoFilePath" -vf "drawbox=x=w-180:y=h-48:w=160:h=36:color=black@0.65:t=fill" -c:v libx264 -preset ultrafast -crf 22 -c:a copy "$tempWatermarkedPath"',
+    );
+
+    for (int i = 0; i < commandsToTry.length; i++) {
+      final cmd = commandsToTry[i];
       try {
-        debugPrint('[WatermarkService] 🎬 Attempt ${i + 1}/${filterAttempts.length} with filter: $currentFilter');
-        final command =
-            '-y -i "$videoFilePath" -vf "$currentFilter" -c:v libx264 -preset ultrafast -crf 23 -c:a copy "$tempWatermarkedPath"';
-
-        final session = await FFmpegKit.execute(command);
+        debugPrint('[WatermarkService] 🎬 Attempt ${i + 1}/${commandsToTry.length}');
+        final session = await FFmpegKit.execute(cmd);
         final returnCode = await session.getReturnCode();
 
         if (ReturnCode.isSuccess(returnCode)) {
@@ -130,7 +179,7 @@ class WatermarkService {
         } else {
           final logs = await session.getLogs();
           final errorSnippet = logs.isNotEmpty ? logs.last.getMessage() : 'Unknown error';
-          debugPrint('[WatermarkService] Attempt ${i + 1} failed (Return code: $returnCode, error: $errorSnippet)');
+          debugPrint('[WatermarkService] Attempt ${i + 1} code: $returnCode, error: $errorSnippet');
           
           final tempFile = File(tempWatermarkedPath);
           if (await tempFile.exists()) {
@@ -138,7 +187,7 @@ class WatermarkService {
           }
         }
       } catch (e) {
-        debugPrint('[WatermarkService] Watermarking error on attempt ${i + 1}: $e');
+        debugPrint('[WatermarkService] Watermark error attempt ${i + 1}: $e');
         final tempFile = File(tempWatermarkedPath);
         if (await tempFile.exists()) {
           try {
@@ -148,7 +197,7 @@ class WatermarkService {
       }
     }
 
-    debugPrint('[WatermarkService] Watermark processing ended, preserved original clean video.');
+    debugPrint('[WatermarkService] Preserved original clean video as safe fallback.');
     return false;
   }
 }
