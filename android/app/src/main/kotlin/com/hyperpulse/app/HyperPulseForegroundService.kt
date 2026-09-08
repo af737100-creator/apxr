@@ -82,17 +82,18 @@ class HyperPulseForegroundService : Service() {
             stopIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
+  val iconRes = if (applicationInfo.icon != 0) applicationInfo.icon else android.R.drawable.stat_sys_download
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HyperPulse Turbo Downloader ⚡")
             .setContentText("محرك التنزيل السريع نشط في الخلفية • لن يتوقف التحميل عند تصغير التطبيق")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(iconRes)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setOngoing(false) // Allow swipe dismiss if wanted
+            .setOngoing(false)
             .setContentIntent(pendingIntent)
             .addAction(0, "إغلاق الإشعار ✕", stopPendingIntent)
-            .build()
-    }
+            .build()      
+        
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
