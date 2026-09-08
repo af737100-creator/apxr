@@ -20,12 +20,14 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private val SERVICE_CHANNEL = "com.hyperpulse.app/foreground_service"
     private val SYSTEM_CHANNEL = "com.hyperpulse.app/android_system"
     private var serviceMethodChannel: MethodChannel? = null
     private var systemMethodChannel: MethodChannel? = null
+    private val ioExecutor = Executors.newSingleThreadExecutor()
 
     private val urlReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -134,8 +136,10 @@ class MainActivity : FlutterActivity() {
                 "scanMediaFile", "exportToPublicStorage" -> {
                     val filePath = call.argument<String>("filePath")
                     if (!filePath.isNullOrEmpty()) {
-                        val publicPath = exportFileToPublicStorage(filePath)
-                        result.success(publicPath ?: filePath)
+                        ioExecutor.execute {
+                            exportFileToPublicStorage(filePath)
+                        }
+                        result.success(filePath)
                     } else {
                         result.error("INVALID_PATH", "File path cannot be null or empty", null)
                     }

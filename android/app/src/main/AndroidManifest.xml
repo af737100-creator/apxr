@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.hyperpulse.app">
+    package="com.hyperpulse.turbo">
 
     <!-- =================================================================== -->
     <!-- 1. صلاحيات الإنترنت والشبكة وتنزيل الملفات بالتوازي                   -->

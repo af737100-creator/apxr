@@ -82,6 +82,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   String? _targetFilePath;
   String _resolvedStorageDir = '';
   bool _extractMp3 = false;
+  bool _enableWatermark = true;
+  bool _isHandlingCompletion = false;
   bool _isVideo = false;
   List<SegmentChunk> _segments = [];
   bool _showSegmentsDetails = false;
@@ -169,7 +171,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           _statusMessage = event.statusText;
         }
 
-        if (event.progressPercent >= 1.0) {
+        if (event.progressPercent >= 1.0 && !_isHandlingCompletion && _isDownloading) {
+          _isHandlingCompletion = true;
           _handleDownloadComplete();
         }
       });
@@ -276,21 +279,28 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   Future<void> _handleDownloadComplete() async {
     setState(() {
       _isDownloading = false;
-      _statusMessage = 'اكتمل التنزيل بنجاح // تم الحفظ وفحص الملف';
+      _statusMessage = 'اكتمل التنزيل بنجاح // جاري تجهيز وفحص الملف...';
     });
 
     HapticFeedback.heavyImpact();
 
-    // Stamp watermark with background and app name if video
-    if (_isVideo && _targetFilePath != null && File(_targetFilePath!).existsSync()) {
+    // Stamp watermark badge if video and enabled
+    if (_enableWatermark && _isVideo && _targetFilePath != null && File(_targetFilePath!).existsSync()) {
+      setState(() {
+        _statusMessage = 'جاري دمج العلامة المائية الفائقة ⚡...';
+      });
       try {
         await WatermarkService().applyWatermarkToVideo(_targetFilePath!);
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('[PulseDownloadScreen] Watermark notice: $e');
+      }
     }
 
     // Trigger MediaScanner for Gallery/Photos indexation
     if (_targetFilePath != null && File(_targetFilePath!).existsSync()) {
-      await AndroidSystemBridge.scanMediaFile(_targetFilePath!);
+      try {
+        await AndroidSystemBridge.scanMediaFile(_targetFilePath!);
+      } catch (_) {}
     }
 
     // Audio Extraction if requested
@@ -411,6 +421,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
     setState(() {
       _isDownloading = true;
+      _isHandlingCompletion = false;
       _progress = 0.01;
       _currentFileName = extractedFileName;
       _statusMessage = 'جاري فحص الرابط واستخراج تيار البيانات...';
@@ -1382,6 +1393,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       DownloadManagerService().resumeTask(_currentTask!.id);
       setState(() {
         _isDownloading = true;
+        _isHandlingCompletion = false;
         _isPaused = false;
         _statusMessage = 'جاري استئناف التنزيل المتوازي من آخر نقطة... ⚡';
       });
@@ -1571,44 +1583,93 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
 
           const SizedBox(height: 10),
 
-          // Row 3: Options (MP3 Audio Toggle & Storage Directory Path)
+          // Row 3: Options (MP3 Audio Toggle, Watermark Badge Toggle & Storage Directory Path)
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Audio MP3 Toggle Pill
-              GestureDetector(
-                onTap: _isDownloading
-                    ? null
-                    : () => setState(() => _extractMp3 = !_extractMp3),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _extractMp3 ? fieryAmber.withOpacity(0.2) : const Color(0xFF1A1820),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: _extractMp3 ? fieryAmber : const Color(0xFF2E2A36),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.music_note,
-                        size: 13,
-                        color: _extractMp3 ? fieryAmber : textMuted,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'استخراج صوت MP3',
-                        style: TextStyle(
-                          color: _extractMp3 ? Colors.white : textMuted,
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.bold,
+              // Audio MP3 & Watermark Toggles Row
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Audio MP3 Toggle Pill
+                  GestureDetector(
+                    onTap: _isDownloading
+                        ? null
+                        : () => setState(() => _extractMp3 = !_extractMp3),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _extractMp3 ? fieryAmber.withOpacity(0.2) : const Color(0xFF1A1820),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _extractMp3 ? fieryAmber : const Color(0xFF2E2A36),
                         ),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.music_note,
+                            size: 13,
+                            color: _extractMp3 ? fieryAmber : textMuted,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'استخراج MP3',
+                            style: TextStyle(
+                              color: _extractMp3 ? Colors.white : textMuted,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+
+                  const SizedBox(width: 6),
+
+                  // Watermark Badge Toggle Pill
+                  GestureDetector(
+                    onTap: _isDownloading
+                        ? null
+                        : () {
+                            setState(() {
+                              _enableWatermark = !_enableWatermark;
+                              WatermarkService().updateConfig(isEnabled: _enableWatermark);
+                            });
+                          },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _enableWatermark ? const Color(0xFF00E5FF).withOpacity(0.18) : const Color(0xFF1A1820),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _enableWatermark ? const Color(0xFF00E5FF) : const Color(0xFF2E2A36),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.verified_outlined,
+                            size: 13,
+                            color: _enableWatermark ? const Color(0xFF00E5FF) : textMuted,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'علامة مائية ⚡',
+                            style: TextStyle(
+                              color: _enableWatermark ? Colors.white : textMuted,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
 
               // Storage Path Display

@@ -13,6 +13,15 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (!keystorePropertiesFile.exists()) {
+    keystorePropertiesFile = file('../key.properties')
+}
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
 if (flutterVersionCode == null) {
     flutterVersionCode = '1'
@@ -24,7 +33,7 @@ if (flutterVersionName == null) {
 }
 
 android {
-    namespace "com.hyperpulse.app"
+    namespace "com.hyperpulse.turbo"
     compileSdk 35
     ndkVersion "25.1.8937393"
 
@@ -45,7 +54,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.hyperpulse.app"
+        applicationId "com.hyperpulse.turbo"
         minSdk 24
         targetSdk 35
         versionCode flutterVersionCode.toInteger()
@@ -53,9 +62,27 @@ android {
         multiDexEnabled true
     }
 
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                def storeFilePath = keystoreProperties['storeFile']
+                if (storeFilePath) {
+                    def kFile = file(storeFilePath)
+                    if (!kFile.exists()) {
+                        kFile = rootProject.file(storeFilePath)
+                    }
+                    storeFile kFile
+                }
+                storePassword keystoreProperties['storePassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            signingConfig (keystorePropertiesFile.exists() && keystoreProperties['storeFile'] != null) ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }

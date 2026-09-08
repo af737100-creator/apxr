@@ -320,7 +320,7 @@ class TurboDownloadService {
         await SmartResumeManager.deleteCheckpoint(task.tempFilePath);
         await SmartResumeManager.deleteCheckpoint(task.fullFilePath);
 
-        // Stamp brand watermark with background and app name on downloaded videos
+        // Stamp brand watermark with background and app name on downloaded videos if enabled
         if (task.isVideo && File(task.fullFilePath).existsSync()) {
           try {
             debugPrint('[TurboDownloadService] 🎬 Stamping brand watermark badge on video: ${task.fullFilePath}');
@@ -334,13 +334,6 @@ class TurboDownloadService {
         try {
           await AndroidSystemBridge.scanMediaFile(task.fullFilePath);
         } catch (_) {}
-
-        // Instant APK Install trigger for apps
-        if (task.isApk) {
-          try {
-            await AndroidSystemBridge.installApk(task.fullFilePath);
-          } catch (_) {}
-        }
 
         // Dispatch final 100% completion progress event
         _progressController.add(
