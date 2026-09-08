@@ -52,11 +52,12 @@ jobs:
           KEYSTORE_PATH="android/app/pulsesphere-keystore.jks"
           KEY_PROPS="android/key.properties"
 
-          if [ ! -f "$KEYSTORE_PATH" ]; then
-            echo "Generating permanent release keystore for PulseSphere..."
-            keytool -genkey -v \
+          if ! keytool -list -keystore "$KEYSTORE_PATH" -storepass "PulseSphere@2026SecureKey!" -storetype PKCS12 > /dev/null 2>&1; then
+            echo "Generating standard Java PKCS12 keystore via Java keytool..."
+            rm -f "$KEYSTORE_PATH"
+            keytool -genkeypair -v \
               -keystore "$KEYSTORE_PATH" \
-              -storetype JKS \
+              -storetype PKCS12 \
               -keyalg RSA \
               -keysize 2048 \
               -validity 10000 \
@@ -64,6 +65,8 @@ jobs:
               -storepass "PulseSphere@2026SecureKey!" \
               -keypass "PulseSphere@2026SecureKey!" \
               -dname "CN=PulseSphere, OU=Mobile, O=PulseSphere Core, L=Dubai, ST=Dubai, C=AE"
+          else
+            echo "Keystore verified successfully with keytool."
           fi
 
           cat <<EOF > "$KEY_PROPS"

@@ -16,6 +16,14 @@ allprojects {
         google()
         mavenCentral()
     }
+    tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+            jvmTarget = "17"
+            freeCompilerArgs += [
+                "-Xskip-metadata-version-check"
+            ]
+        }
+    }
 }
 
 rootProject.buildDir = "../build"
@@ -24,19 +32,6 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
-}
-
-subprojects {
-    plugins.withId("org.jetbrains.kotlin.android") {
-        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-            kotlinOptions {
-                jvmTarget = "17"
-                freeCompilerArgs += [
-                    "-Xskip-metadata-version-check"
-                ]
-            }
-        }
-    }
 }
 
 tasks.register("clean", Delete) {

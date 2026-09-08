@@ -74,6 +74,7 @@ android {
                 keyAlias = keystoreProperties['keyAlias']
                 keyPassword = keystoreProperties['keyPassword']
                 storePassword = keystoreProperties['storePassword']
+                storeType = "PKCS12"
                 def storeFilePath = keystoreProperties['storeFile']
                 if (storeFilePath) {
                     def kFile = file(storeFilePath)
