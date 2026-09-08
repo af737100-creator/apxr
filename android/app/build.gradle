@@ -65,24 +65,34 @@ android {
     signingConfigs {
         release {
             if (keystorePropertiesFile.exists()) {
-                keyAlias keystoreProperties['keyAlias']
-                keyPassword keystoreProperties['keyPassword']
+                keyAlias = keystoreProperties['keyAlias']
+                keyPassword = keystoreProperties['keyPassword']
+                storePassword = keystoreProperties['storePassword']
                 def storeFilePath = keystoreProperties['storeFile']
                 if (storeFilePath) {
                     def kFile = file(storeFilePath)
                     if (!kFile.exists()) {
                         kFile = rootProject.file(storeFilePath)
                     }
-                    storeFile kFile
+                    if (!kFile.exists() && storeFilePath.startsWith("app/")) {
+                        kFile = file(storeFilePath.substring(4))
+                    }
+                    if (!kFile.exists()) {
+                        kFile = file("../" + storeFilePath)
+                    }
+                    storeFile = kFile
                 }
-                storePassword keystoreProperties['storePassword']
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig (keystorePropertiesFile.exists() && keystoreProperties['storeFile'] != null) ? signingConfigs.release : signingConfigs.debug
+            if (keystorePropertiesFile.exists() && keystoreProperties['storeFile'] != null) {
+                signingConfig = signingConfigs.release
+            } else {
+                signingConfig = signingConfigs.debug
+            }
             minifyEnabled false
             shrinkResources false
         }
