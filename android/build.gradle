@@ -27,8 +27,8 @@ subprojects {
 }
 
 subprojects {
-    afterEvaluate { project ->
-        project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    plugins.withId("org.jetbrains.kotlin.android") {
+        tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
             kotlinOptions {
                 jvmTarget = "17"
                 freeCompilerArgs += [
