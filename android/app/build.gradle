@@ -33,13 +33,13 @@ if (flutterVersionName == null) {
 }
 
 // Auto-cleanup legacy package folder if present on CI runner
-def legacyPackageDir = file("src/main/kotlin/com/hyperpulse/app")
+def legacyPackageDir = file("src/main/kotlin/com/hyperpulse")
 if (legacyPackageDir.exists()) {
     legacyPackageDir.deleteDir()
 }
 
 android {
-    namespace "com.hyperpulse.turbo"
+    namespace "com.pulsesphere.speedcore"
     compileSdk 36
     ndkVersion "28.2.13676358"
 
@@ -56,11 +56,11 @@ android {
     }
 
     sourceSets {
-        main.java.srcDirs = ['src/main/kotlin/com/hyperpulse/turbo']
+        main.java.srcDirs = ['src/main/kotlin/com/pulsesphere/speedcore']
     }
 
     defaultConfig {
-        applicationId "com.hyperpulse.turbo"
+        applicationId "com.pulsesphere.speedcore"
         minSdk 24
         targetSdk 35
         versionCode flutterVersionCode.toInteger()
