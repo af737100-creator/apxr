@@ -38,6 +38,41 @@ jobs:
       - name: Install Flutter Dependencies
         run: flutter pub get
 
+      - name: Ensure Kotlin 2.1.0 and Package Consistency
+        run: |
+          # Guarantee Kotlin 2.1.0 in settings.gradle
+          sed -i 's/org.jetbrains.kotlin.android" version "[^"]*"/org.jetbrains.kotlin.android" version "2.1.0"/' android/settings.gradle || true
+          
+          # Clean up any legacy app package directory
+          rm -rf android/app/src/main/kotlin/com/hyperpulse/app || true
+
+      - name: Configure Release Keystore & Signature
+        run: |
+          mkdir -p android/app
+          KEYSTORE_PATH="android/app/hyperpulse-keystore.jks"
+          KEY_PROPS="android/key.properties"
+
+          if [ ! -f "$KEYSTORE_PATH" ]; then
+            echo "Generating permanent release keystore for HyperPulse..."
+            keytool -genkey -v \
+              -keystore "$KEYSTORE_PATH" \
+              -storetype JKS \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -alias hyperpulse \
+              -storepass "HyperPulse@2026SecureKey!" \
+              -keypass "HyperPulse@2026SecureKey!" \
+              -dname "CN=HyperPulse, OU=Production, O=HyperPulse Inc, L=Dubai, ST=Dubai, C=AE"
+          fi
+
+          cat <<EOF > "$KEY_PROPS"
+          storePassword=HyperPulse@2026SecureKey!
+          keyPassword=HyperPulse@2026SecureKey!
+          keyAlias=hyperpulse
+          storeFile=app/hyperpulse-keystore.jks
+          EOF
+
       - name: Build Universal Release APK
         run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 

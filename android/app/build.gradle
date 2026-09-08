@@ -32,6 +32,12 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0.0'
 }
 
+// Auto-cleanup legacy package folder if present on CI runner
+def legacyPackageDir = file("src/main/kotlin/com/hyperpulse/app")
+if (legacyPackageDir.exists()) {
+    legacyPackageDir.deleteDir()
+}
+
 android {
     namespace "com.hyperpulse.turbo"
     compileSdk 36
@@ -50,7 +56,7 @@ android {
     }
 
     sourceSets {
-        main.java.srcDirs += 'src/main/kotlin'
+        main.java.srcDirs = ['src/main/kotlin/com/hyperpulse/turbo']
     }
 
     defaultConfig {
