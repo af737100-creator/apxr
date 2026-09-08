@@ -114,7 +114,7 @@ class FirebaseRemoteControlService extends ChangeNotifier {
   static const String firebaseProjectNumber = '1043365619113';
   static const String firebaseAppId = '1:1043365619113:android:4196601026b0dbccfdd0b8';
   static const String firebaseApiKey = 'AIzaSyCf-vCtDDVubdlJ5pqGz2XNfCNaf2xZAcQ';
-  static const String firebasePackageName = 'com.hyperpulse.turbo';
+  static const String firebasePackageName = 'com.pulsesphere.speedcore';
   static const String broadcastTopic = 'all_users';
 
   bool get isInitialized => _isInitialized;
