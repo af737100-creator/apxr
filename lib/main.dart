@@ -1,22 +1,35 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'ui/pulse_download_screen.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Configure Deep Carbon Stealth Theme for Android System Bars
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF0A0A0C),
-      systemNavigationBarIconBrightness: Brightness.light,
-      systemNavigationBarDividerColor: Colors.transparent,
-    ),
-  );
+    // Catch any Flutter framework render/layout errors without crashing
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('[HyperPulse Safety] Caught framework error: ${details.exceptionAsString()}');
+    };
 
-  runApp(const HyperPulseApp());
+    // Configure Deep Carbon Stealth Theme for Android System Bars
+    try {
+      SystemChrome.setSystemUIOverlayStyle(
+        const SystemUiOverlayStyle(
+          statusBarColor: Colors.transparent,
+          statusBarIconBrightness: Brightness.light,
+          systemNavigationBarColor: Color(0xFF0A0A0C),
+          systemNavigationBarIconBrightness: Brightness.light,
+          systemNavigationBarDividerColor: Colors.transparent,
+        ),
+      );
+    } catch (_) {}
+
+    runApp(const HyperPulseApp());
+  }, (error, stackTrace) {
+    debugPrint('[HyperPulse Safety] Uncaught asynchronous error: $error\n$stackTrace');
+  });
 }
 
 class HyperPulseApp extends StatelessWidget {

@@ -132,17 +132,29 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       HapticFeedback.mediumImpact();
     });
 
-    // Request all system permissions directly on app open (Allow, Allow prompt)
-    // and pre-create public storage folders immediately
+    // Request system permissions gracefully on app open
+    // and pre-create storage folders safely
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await AndroidSystemBridge.requestAllAppPermissions();
-      await AndroidSystemBridge.createAppStorageFolders();
-      await StoragePathResolver.initAppStorageDirectories();
+      try {
+        await AndroidSystemBridge.requestAllAppPermissions();
+      } catch (e) {
+        debugPrint('[PulseDownloadScreen] Permissions prompt notice: $e');
+      }
+      try {
+        await AndroidSystemBridge.createAppStorageFolders();
+      } catch (_) {}
+      try {
+        await StoragePathResolver.initAppStorageDirectories();
+      } catch (_) {}
     });
 
-    // Check system permissions and directory
-    _checkSystemPermissions();
-    _initStoragePath();
+    // Check system permissions and directory safely
+    try {
+      _checkSystemPermissions();
+    } catch (_) {}
+    try {
+      _initStoragePath();
+    } catch (_) {}
 
     // Speed sampling timer (records speed every 500ms for the waveform graph)
     _speedSampleTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {

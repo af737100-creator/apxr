@@ -425,23 +425,6 @@ class MainActivity : FlutterActivity() {
             if (permissionsToRequest.isNotEmpty()) {
                 requestPermissions(permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
             }
-
-            // Android 11+ (API 30+) Scoped Storage / All Files access
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if (!Environment.isExternalStorageManager()) {
-                    try {
-                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                            data = Uri.parse("package:$packageName")
-                        }
-                        startActivity(intent)
-                    } catch (_: Exception) {
-                        try {
-                            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-                            startActivity(intent)
-                        } catch (_: Exception) {}
-                    }
-                }
-            }
             true
         } catch (e: Exception) {
             Log.e("MainActivity", "requestAllAppPermissions error: ${e.message}")
