@@ -61,7 +61,7 @@ android {
 
     defaultConfig {
         applicationId "com.pulsesphere.speedcore"
-        minSdk 24
+        minSdk 21
         targetSdk 35
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName

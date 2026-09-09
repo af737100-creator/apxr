@@ -137,6 +137,16 @@ class DownloadManagerService extends ChangeNotifier {
     }
   }
 
+  /// Helper to safely list files in a directory without throwing on permission errors
+  List<File> _safeListFiles(Directory dir) {
+    try {
+      if (!dir.existsSync()) return [];
+      return dir.listSync().whereType<File>().toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
   /// Recovers any .pulse_state files in download folders
   Future<void> _recoverOrphanStateFiles() async {
     try {
@@ -146,7 +156,7 @@ class DownloadManagerService extends ChangeNotifier {
       final searchDirs = [Directory(downloadsDir), Directory(moviesDir)];
       for (final dir in searchDirs) {
         if (!await dir.exists()) continue;
-        final entries = dir.listSync().whereType<File>();
+        final entries = _safeListFiles(dir);
         for (final entry in entries) {
           if (entry.path.endsWith('.pulse_state')) {
             final targetFilePath = entry.path.replaceAll('.pulse_state', '');
@@ -244,12 +254,12 @@ class DownloadManagerService extends ChangeNotifier {
 
       final mDir = Directory(moviesDir);
       if (await mDir.exists()) {
-        scannedFiles.addAll(mDir.listSync().whereType<File>());
+        scannedFiles.addAll(_safeListFiles(mDir));
       }
 
       final dDir = Directory(downloadsDir);
       if (await dDir.exists()) {
-        scannedFiles.addAll(dDir.listSync().whereType<File>());
+        scannedFiles.addAll(_safeListFiles(dDir));
       }
 
       for (final file in scannedFiles) {

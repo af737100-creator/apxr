@@ -132,9 +132,11 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       HapticFeedback.mediumImpact();
     });
 
-    // Request system permissions gracefully on app open
+    // Request system permissions gracefully after UI mounts smoothly
     // and pre-create storage folders safely
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
       try {
         await AndroidSystemBridge.requestAllAppPermissions();
       } catch (e) {

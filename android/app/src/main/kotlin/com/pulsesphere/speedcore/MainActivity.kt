@@ -186,12 +186,16 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        // Register broadcast receiver for URLs captured in background
-        val filter = IntentFilter(HyperPulseForegroundService.BROADCAST_URL_CAUGHT)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(urlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(urlReceiver, filter)
+        // Register broadcast receiver for URLs captured in background safely
+        try {
+            val filter = IntentFilter(HyperPulseForegroundService.BROADCAST_URL_CAUGHT)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(urlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(urlReceiver, filter)
+            }
+        } catch (e: Throwable) {
+            Log.e("MainActivity", "registerReceiver warning: ${e.message}")
         }
     }
 
@@ -316,21 +320,29 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startHyperPulseForegroundService() {
-        val intent = Intent(this, HyperPulseForegroundService::class.java).apply {
-            action = HyperPulseForegroundService.ACTION_START_SERVICE
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
+        try {
+            val intent = Intent(this, HyperPulseForegroundService::class.java).apply {
+                action = HyperPulseForegroundService.ACTION_START_SERVICE
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Throwable) {
+            Log.e("MainActivity", "startHyperPulseForegroundService error: ${e.message}")
         }
     }
 
     private fun stopHyperPulseForegroundService() {
-        val intent = Intent(this, HyperPulseForegroundService::class.java).apply {
-            action = HyperPulseForegroundService.ACTION_STOP_SERVICE
+        try {
+            val intent = Intent(this, HyperPulseForegroundService::class.java).apply {
+                action = HyperPulseForegroundService.ACTION_STOP_SERVICE
+            }
+            startService(intent)
+        } catch (e: Throwable) {
+            Log.e("MainActivity", "stopHyperPulseForegroundService error: ${e.message}")
         }
-        startService(intent)
     }
 
     private fun installApkDirectly(filePath: String): Boolean {
@@ -393,29 +405,34 @@ class MainActivity : FlutterActivity() {
 
     private fun requestAllAppPermissions(): Boolean {
         return try {
+            // Runtime permissions only apply to Android 6.0+ (API 23+)
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                return true
+            }
+
             val permissionsToRequest = mutableListOf<String>()
 
             // 1. Android 13+ (API 33+) Media & Notification permissions
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(android.Manifest.permission.POST_NOTIFICATIONS)
                 }
-                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_VIDEO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_MEDIA_VIDEO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_VIDEO)
                 }
-                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_MEDIA_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_AUDIO)
                 }
-                if (checkSelfPermission(android.Manifest.permission.READ_MEDIA_IMAGES) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_MEDIA_IMAGES) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(android.Manifest.permission.READ_MEDIA_IMAGES)
                 }
             } else {
                 // 2. Android 12 and below storage permissions
-                if (checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.READ_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     permissionsToRequest.add(android.Manifest.permission.READ_EXTERNAL_STORAGE)
                 }
                 if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
-                    if (checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                         permissionsToRequest.add(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     }
                 }
@@ -423,10 +440,10 @@ class MainActivity : FlutterActivity() {
 
             // Pop up native system dialogs for user to tap "Allow" (سماح)
             if (permissionsToRequest.isNotEmpty()) {
-                requestPermissions(permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
+                androidx.core.app.ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
             }
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainActivity", "requestAllAppPermissions error: ${e.message}")
             false
         }
@@ -435,32 +452,37 @@ class MainActivity : FlutterActivity() {
     private fun createAppStorageFolders(): Boolean {
         return try {
             val downloadPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val hpDownload = File(downloadPublic, "HyperPulse")
+            if (downloadPublic != null) {
+                val hpDownload = File(downloadPublic, "HyperPulse")
+                if (!hpDownload.exists()) {
+                    hpDownload.mkdirs()
+                }
+                val subDirs = listOf("Apps", "Videos", "Audio", "Archives", "Documents")
+                for (sub in subDirs) {
+                    val f = File(hpDownload, sub)
+                    if (!f.exists()) {
+                        f.mkdirs()
+                    }
+                }
+            }
 
             val moviesPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
-            val hpMovies = File(moviesPublic, "HyperPulse")
+            if (moviesPublic != null) {
+                val hpMovies = File(moviesPublic, "HyperPulse")
+                if (!hpMovies.exists()) {
+                    hpMovies.mkdirs()
+                }
+            }
 
             val musicPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-            val hpMusic = File(musicPublic, "HyperPulse")
-
-            val directoriesToEnsure = listOf(
-                hpDownload,
-                File(hpDownload, "Apps"),
-                File(hpDownload, "Videos"),
-                File(hpDownload, "Audio"),
-                File(hpDownload, "Archives"),
-                File(hpDownload, "Documents"),
-                hpMovies,
-                hpMusic
-            )
-
-            for (dir in directoriesToEnsure) {
-                if (!dir.exists()) {
-                    dir.mkdirs()
+            if (musicPublic != null) {
+                val hpMusic = File(musicPublic, "HyperPulse")
+                if (!hpMusic.exists()) {
+                    hpMusic.mkdirs()
                 }
             }
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e("MainActivity", "createAppStorageFolders error: ${e.message}")
             false
         }

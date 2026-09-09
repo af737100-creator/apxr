@@ -78,10 +78,8 @@ class SmartDownloadCatcher {
     _isListening = true;
     debugPrint('[SmartDownloadCatcher] 🚀 Started clipboard monitor & Foreground Service.');
 
-    // 1. Start Android Native Foreground Service (Sticky Notification in Status Bar)
-    _startNativeForegroundService();
-
-    // 2. Poll Clipboard actively when in foreground
+    // 1. Poll Clipboard actively when in foreground
+    // Native Foreground Service is managed per-download by DownloadManagerService
     _clipboardTimer = Timer.periodic(pollInterval, (_) async {
       await inspectClipboard();
     });

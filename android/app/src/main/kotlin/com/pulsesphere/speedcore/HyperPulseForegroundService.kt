@@ -50,18 +50,21 @@ class HyperPulseForegroundService : Service() {
         }
 
         try {
+            createNotificationChannel()
+            val notification = buildNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
                     NOTIFICATION_ID,
-                    buildNotification(),
+                    notification,
                     android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                 )
             } else {
-                startForeground(NOTIFICATION_ID, buildNotification())
+                startForeground(NOTIFICATION_ID, notification)
             }
             isRunning = true
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (e: Throwable) {
+            Log.e("HyperPulseService", "startForeground error: ${e.message}")
+            stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -95,7 +98,8 @@ class HyperPulseForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0)
         )
 
-        val iconRes = if (applicationInfo.icon != 0) applicationInfo.icon else android.R.drawable.stat_sys_download
+        // Must always be a 2D flat monochrome system drawable to prevent Bad notification crash on Android 8+
+        val iconRes = android.R.drawable.stat_sys_download
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("نبضة كروية ⚡ PulseSphere")
@@ -109,30 +113,34 @@ class HyperPulseForegroundService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "HyperPulse Link Catcher Radar",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "خدمة المراقبة الدائمة لروابط التحميل والوسائط في الخلفية"
-                setShowBadge(false)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "HyperPulse Link Catcher Radar",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "خدمة المراقبة الدائمة لروابط التحميل والوسائط في الخلفية"
+                    setShowBadge(false)
+                }
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.createNotificationChannel(channel)
             }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+        } catch (e: Throwable) {
+            Log.e("HyperPulseService", "createNotificationChannel error: ${e.message}")
         }
     }
 
     private fun acquireWakeLock() {
         try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(
+            val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            wakeLock = powerManager?.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
                 "HyperPulse::ForegroundServiceWakeLock"
-            ).apply {
+            )?.apply {
                 acquire(120 * 60 * 1000L) // 2 hours keep-alive while downloading
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
