@@ -38,7 +38,7 @@ class HyperPulseApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'HyperPulse',
+      title: 'نبضة كروية - PulseSphere',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,

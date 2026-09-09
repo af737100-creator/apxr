@@ -41,8 +41,17 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // Ensure app storage folder tree exists immediately upon launch
-        createAppStorageFolders()
+        // Ensure app storage folder tree exists safely in background
+        ioExecutor.execute {
+            createAppStorageFolders()
+        }
+
+        // Register DualNetworkPlugin
+        try {
+            flutterEngine.plugins.add(DualNetworkPlugin())
+        } catch (e: Throwable) {
+            Log.w("MainActivity", "DualNetworkPlugin notice: ${e.message}")
+        }
 
         // 1. Foreground Service Channel
         serviceMethodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SERVICE_CHANNEL)
@@ -440,7 +449,13 @@ class MainActivity : FlutterActivity() {
 
             // Pop up native system dialogs for user to tap "Allow" (سماح)
             if (permissionsToRequest.isNotEmpty()) {
-                androidx.core.app.ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
+                runOnUiThread {
+                    try {
+                        androidx.core.app.ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), RUNTIME_PERMISSIONS_CODE)
+                    } catch (e: Throwable) {
+                        Log.w("MainActivity", "ActivityCompat.requestPermissions notice: ${e.message}")
+                    }
+                }
             }
             true
         } catch (e: Throwable) {

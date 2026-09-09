@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.hyperpulse.app">
+    package="com.pulsesphere.speedcore">
 
     <!-- 1. الشبكة والإنترنت والتحميل فائق السرعة -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -24,7 +24,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
 
     <application
-        android:label="HyperPulse"
+        android:label="نبضة كروية"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"

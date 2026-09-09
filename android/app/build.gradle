@@ -56,7 +56,7 @@ android {
     }
 
     sourceSets {
-        main.java.srcDirs = ['src/main/kotlin/com/pulsesphere/speedcore']
+        main.java.srcDirs += 'src/main/kotlin'
     }
 
     defaultConfig {

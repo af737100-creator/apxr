@@ -29,14 +29,14 @@ class StorageLocationInfo {
 /// Resolves the optimal, scoped-storage compliant download destination path
 /// for modern Android (13, 14, 15, 16+) and iOS/Desktop with zero-crash fallbacks.
 class StoragePathResolver {
-  static const String appSubfolder = 'HyperPulse';
+  static const String appSubfolder = 'PulseSphere';
 
   /// Sanitizes any string into a valid, safe cross-platform file name.
   /// Removes emojis, hashtags, illegal FAT32/Linux characters, trailing dots and spaces,
   /// and caps the length to prevent OS filesystem errors.
   static String sanitizeFileName(String name, {String fallbackExtension = 'mp4'}) {
     if (name.trim().isEmpty) {
-      return 'HyperPulse_${DateTime.now().millisecondsSinceEpoch}.$fallbackExtension';
+      return 'PulseSphere_${DateTime.now().millisecondsSinceEpoch}.$fallbackExtension';
     }
 
     String clean = name.trim();
@@ -376,6 +376,14 @@ class StoragePathResolver {
 
         // 2. Direct Dart filesystem creation for standard public paths
         final candidatePaths = [
+          '/storage/emulated/0/Download/PulseSphere',
+          '/storage/emulated/0/Download/PulseSphere/Apps',
+          '/storage/emulated/0/Download/PulseSphere/Videos',
+          '/storage/emulated/0/Download/PulseSphere/Audio',
+          '/storage/emulated/0/Download/PulseSphere/Archives',
+          '/storage/emulated/0/Download/PulseSphere/Documents',
+          '/storage/emulated/0/Movies/PulseSphere',
+          '/storage/emulated/0/Music/PulseSphere',
           '/storage/emulated/0/Download/HyperPulse',
           '/storage/emulated/0/Download/HyperPulse/Apps',
           '/storage/emulated/0/Download/HyperPulse/Videos',

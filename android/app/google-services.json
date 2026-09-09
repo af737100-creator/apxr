@@ -23,25 +23,6 @@
           "other_platform_oauth_client": []
         }
       }
-    },
-    {
-      "client_info": {
-        "mobilesdk_app_id": "1:1043365619113:android:4196601026b0dbccfdd0b8",
-        "android_client_info": {
-          "package_name": "com.hyperpulse.turbo"
-        }
-      },
-      "oauth_client": [],
-      "api_key": [
-        {
-          "current_key": "AIzaSyCf-vCtDDVubdlJ5pqGz2XNfCNaf2xZAcQ"
-        }
-      ],
-      "services": {
-        "appinvite_service": {
-          "other_platform_oauth_client": []
-        }
-      }
     }
   ],
   "configuration_version": "1"
