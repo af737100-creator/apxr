@@ -46,6 +46,18 @@ jobs:
           # Clean up any legacy app package directories
           rm -rf android/app/src/main/kotlin/com/hyperpulse || true
 
+          # Clean up any legacy or corrupt mipmap directories
+          rm -rf android/app/src/main/res/mipmap-mdpi \
+                 android/app/src/main/res/mipmap-hdpi \
+                 android/app/src/main/res/mipmap-xhdpi \
+                 android/app/src/main/res/mipmap-xxhdpi \
+                 android/app/src/main/res/mipmap-xxxhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-mdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-hdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xxhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xxxhdpi || true
+
       - name: Configure Permanent Release Keystore & Signature
         run: |
           mkdir -p android/app
@@ -76,8 +88,29 @@ jobs:
           storeFile=app/pulsesphere-keystore.jks
           EOF
 
+      - name: Clean and Prepare Build Environment
+        run: |
+          rm -rf android/app/src/main/res/mipmap-mdpi \
+                 android/app/src/main/res/mipmap-hdpi \
+                 android/app/src/main/res/mipmap-xhdpi \
+                 android/app/src/main/res/mipmap-xxhdpi \
+                 android/app/src/main/res/mipmap-xxxhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-mdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-hdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xxhdpi \
+                 flutter_engine/android/app/src/main/res/mipmap-xxxhdpi || true
+          flutter clean
+          flutter pub get
+
       - name: Build Universal Release APK
-        run: flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
+        run: |
+          rm -rf android/app/src/main/res/mipmap-mdpi \
+                 android/app/src/main/res/mipmap-hdpi \
+                 android/app/src/main/res/mipmap-xhdpi \
+                 android/app/src/main/res/mipmap-xxhdpi \
+                 android/app/src/main/res/mipmap-xxxhdpi || true
+          flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Build Split ABI APKs (Optimized size)
         run: flutter build apk --release --split-per-abi --no-tree-shake-icons --android-skip-build-dependency-validation
