@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'smart_url_filter.dart';
 import 'dual_cloud_extractor.dart';
+import 'multi_server_extractor.dart';
 
 /// [CloudExtractedMedia] holds extracted direct stream information
 class CloudExtractedMedia {
@@ -85,6 +86,7 @@ class CloudExtractedMedia {
 /// 4. Parallel Racing Cobalt Pool (v7 + v10 APIs with auto-failover).
 class CloudExtractorService {
   final Dio _dio;
+  final String? wispbyteServerUrl;
 
   // Cloud resolution endpoints (Parallel Racing Pool)
   final List<String> resolverEndpoints = [
@@ -97,7 +99,7 @@ class CloudExtractorService {
     'https://inv.tux.pizza',
   ];
 
-  CloudExtractorService({Dio? customDio})
+  CloudExtractorService({Dio? customDio, this.wispbyteServerUrl})
       : _dio = customDio ??
             Dio(
               BaseOptions(
@@ -247,16 +249,38 @@ class CloudExtractorService {
       );
     }
 
-    // 2. Multi-Engine Fast Proxy (/api/extract on local/cloud backend)
+    // 2. High-Resilience Multi-Server Failover System (Wispbyte + Cobalt 4-Server Backup Pool)
+    debugPrint('[CloudExtractorService] 🛡️ Activating MultiServerExtractor Failover System for: $cleanUrl');
     try {
-      final localRes = await _extractViaLocalServerProxy(cleanUrl);
-      if (localRes != null && localRes.success) {
-        debugPrint('[CloudExtractorService] ⚡ Local/Backend Proxy Extraction Succeeded: ${localRes.directStreamUrl}');
-        return localRes;
-      }
-    } catch (_) {}
+      final multiRes = await MultiServerExtractor.extract(
+        cleanUrl,
+        customWispbyteUrl: wispbyteServerUrl,
+      );
 
-    // 3. DEDICATED YOUTUBE TURBO ENGINE (Prioritized for zero-wait YouTube stream extraction)
+      if (multiRes.success && multiRes.directUrl != null && multiRes.directUrl!.isNotEmpty) {
+        var title = (multiRes.title ?? 'PulseSphere_Media').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+        final format = multiRes.format ?? 'mp4';
+        if (!title.toLowerCase().endsWith('.$format')) {
+          title = '$title.$format';
+        }
+
+        return CloudExtractedMedia(
+          success: true,
+          originalUrl: cleanUrl,
+          directStreamUrl: multiRes.directUrl!,
+          title: title,
+          format: format,
+          quality: multiRes.serverUsed ?? 'Multi-Server Failover Engine ⚡',
+          thumbnailUrl: multiRes.thumbnailUrl,
+          estimatedSizeBytes: multiRes.size,
+          isDirectFallback: false,
+        );
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] ⚠️ MultiServerExtractor error: $e');
+    }
+
+    // 3. ON-DEVICE DEDICATED TURBO FALLBACKS (If external cloud networks are blocked)
     if (isYouTubeUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] ⚡ Activating Dedicated YouTube Turbo Engine for: $cleanUrl');
       final ytRes = await _extractYouTubeDirect(cleanUrl);
@@ -265,7 +289,6 @@ class CloudExtractorService {
       }
     }
 
-    // 4. DEDICATED TIKTOK ENGINE (TikWM + Tiklydown + LoveTik Parallel Race)
     if (isTikTokUrl(cleanUrl)) {
       debugPrint('[CloudExtractorService] 🎵 Activating Dedicated TikTok Engine for: $cleanUrl');
       final tikTokRes = await _extractTikTokDirect(cleanUrl);
@@ -274,33 +297,6 @@ class CloudExtractorService {
       }
     }
 
-    // 5. PRIMARY & SECONDARY DUAL SERVER EXTRACTOR (10-Engine Parallel Race)
-    if (isSocialVideoPlatform(cleanUrl)) {
-      debugPrint('[CloudExtractorService] 🛰️ Invoking DualCloudExtractor for: $cleanUrl');
-      final dualRes = await DualCloudExtractor.extract(cleanUrl);
-      if (dualRes.success && dualRes.directUrl != null) {
-        var title = (dualRes.title ?? 'HyperPulse_Media').replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-        final format = dualRes.format ?? 'mp4';
-        if (!title.toLowerCase().endsWith('.$format')) {
-          title = '$title.$format';
-        }
-
-        return CloudExtractedMedia(
-          success: true,
-          originalUrl: cleanUrl,
-          directStreamUrl: dualRes.directUrl!,
-          title: title,
-          format: format,
-          quality: dualRes.providerUsed ?? 'Dual Cloud Server',
-          estimatedSizeBytes: dualRes.size,
-          isDirectFallback: false,
-        );
-      } else {
-        debugPrint('[CloudExtractorService] ⚠️ Dual server extractor reported: ${dualRes.errorMessage}. Testing client-side fallbacks...');
-      }
-    }
-
-    // 5. ON-DEVICE INSTAGRAM / FACEBOOK / TWITTER PARSERS
     if (isInstagramUrl(cleanUrl)) {
       final igRes = await _extractInstagramDirect(cleanUrl);
       if (igRes != null && igRes.success) return igRes;
@@ -314,16 +310,7 @@ class CloudExtractorService {
       if (twRes != null && twRes.success) return twRes;
     }
 
-    // 6. Parallel Racing across Cobalt Multi-Server Pool
-    try {
-      final futures = resolverEndpoints.map((baseUrl) => _resolveCobaltEndpoint(baseUrl, cleanUrl));
-      final winningResult = await Future.any(futures).timeout(const Duration(seconds: 5));
-      if (winningResult != null && winningResult.success) {
-        return winningResult;
-      }
-    } catch (_) {}
-
-    // 7. Direct file safety check (ONLY if NOT a social platform)
+    // 4. Direct file safety check (ONLY if NOT a social platform)
     if (!isSocialVideoPlatform(cleanUrl) && SmartUrlFilter.isCleanAndSafe(cleanUrl)) {
       debugPrint('[CloudExtractorService] Activating direct fallback for non-social url: $cleanUrl');
       final ext = SmartUrlFilter.inferFileExtension(cleanUrl) ?? 'mp4';
@@ -333,10 +320,16 @@ class CloudExtractorService {
       );
     }
 
-    // 8. If social media extraction failed, DO NOT download the HTML webpage! Return clear error with browser option
+    // 5. IF ALL SERVERS FAIL: Log in Firebase Analytics & return specified error message
+    const failoverErrorMessage = 'تعذر استخراج الفيديو. جرب لاحقاً أو استخدم الرابط المباشر.';
+    await MultiServerExtractor.logFailureToFirebaseAnalytics(
+      cleanUrl,
+      'All 5 Failover servers and on-device engines exhausted',
+    );
+
     return CloudExtractedMedia.failure(
       originalUrl: cleanUrl,
-      errorMessage: 'تعذر استخراج تيار الفيديو المباشر من هذا الرابط. افتحه داخل "المتصفح الذكي 🌐" لتشغيله والتقاطه فوراً.',
+      errorMessage: failoverErrorMessage,
     );
   }
 

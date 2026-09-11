@@ -1,1 +1,1 @@
-web: gunicorn app:app -b 0.0.0.0:8080
+web: gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --threads 2 --worker-class gthread --max-requests 100 --max-requests-jitter 10 --timeout 60
