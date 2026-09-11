@@ -23,11 +23,11 @@ import androidx.core.app.NotificationCompat
 class HyperPulseForegroundService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "hyperpulse_catcher_channel"
+        const val CHANNEL_ID = "pulsesphere_catcher_channel"
         const val NOTIFICATION_ID = 90210
-        const val ACTION_START_SERVICE = "ACTION_START_HYPERPULSE_SERVICE"
-        const val ACTION_STOP_SERVICE = "ACTION_STOP_HYPERPULSE_SERVICE"
-        const val BROADCAST_URL_CAUGHT = "com.hyperpulse.app.URL_CAUGHT"
+        const val ACTION_START_SERVICE = "ACTION_START_PULSESPHERE_SERVICE"
+        const val ACTION_STOP_SERVICE = "ACTION_STOP_PULSESPHERE_SERVICE"
+        const val BROADCAST_URL_CAUGHT = "com.pulsesphere.speedcore.URL_CAUGHT"
         var isRunning = false
         var hasActiveDownloads = false
     }
@@ -118,7 +118,7 @@ class HyperPulseForegroundService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val channel = NotificationChannel(
                     CHANNEL_ID,
-                    "HyperPulse Link Catcher Radar",
+                    "PulseSphere Link Catcher Radar",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
                     description = "خدمة المراقبة الدائمة لروابط التحميل والوسائط في الخلفية"
@@ -128,7 +128,7 @@ class HyperPulseForegroundService : Service() {
                 manager?.createNotificationChannel(channel)
             }
         } catch (e: Throwable) {
-            Log.e("HyperPulseService", "createNotificationChannel error: ${e.message}")
+            Log.e("PulseSphereService", "createNotificationChannel error: ${e.message}")
         }
     }
 
@@ -137,7 +137,7 @@ class HyperPulseForegroundService : Service() {
             val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
             wakeLock = powerManager?.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
-                "HyperPulse::ForegroundServiceWakeLock"
+                "PulseSphere::ForegroundServiceWakeLock"
             )?.apply {
                 acquire(120 * 60 * 1000L) // 2 hours keep-alive while downloading
             }

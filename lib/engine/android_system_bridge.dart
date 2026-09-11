@@ -9,9 +9,9 @@ import 'package:flutter/services.dart';
 /// 4. Movies/HyperPulse public directory resolution.
 class AndroidSystemBridge {
   static const MethodChannel _systemChannel =
-      MethodChannel('com.hyperpulse.app/android_system');
+      MethodChannel('com.pulsesphere.speedcore/android_system');
   static const MethodChannel _serviceChannel =
-      MethodChannel('com.hyperpulse.app/foreground_service');
+      MethodChannel('com.pulsesphere.speedcore/foreground_service');
 
   /// Starts the Android Foreground Service to keep CPU & Network alive when app is minimized.
   static Future<bool> startForegroundService() async {

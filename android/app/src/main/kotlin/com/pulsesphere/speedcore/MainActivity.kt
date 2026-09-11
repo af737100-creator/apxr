@@ -23,8 +23,8 @@ import java.io.File
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
-    private val SERVICE_CHANNEL = "com.hyperpulse.app/foreground_service"
-    private val SYSTEM_CHANNEL = "com.hyperpulse.app/android_system"
+    private val SERVICE_CHANNEL = "com.pulsesphere.speedcore/foreground_service"
+    private val SYSTEM_CHANNEL = "com.pulsesphere.speedcore/android_system"
     private var serviceMethodChannel: MethodChannel? = null
     private var systemMethodChannel: MethodChannel? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
@@ -250,10 +250,10 @@ class MainActivity : FlutterActivity() {
                 else -> "application/octet-stream"
             }
 
-            // 1. Ensure file exists in the public categorized folder: Download/HyperPulse/Apps, Videos, Archives, etc.
+            // 1. Ensure file exists in the public categorized folder: Download/PulseSphere/Apps, Videos, Archives, etc.
             var targetPublicPath = file.absolutePath
             try {
-                val pubDlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "HyperPulse/$category")
+                val pubDlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PulseSphere/$category")
                 if (!pubDlDir.exists()) {
                     pubDlDir.mkdirs()
                 }
@@ -264,17 +264,17 @@ class MainActivity : FlutterActivity() {
                 targetPublicPath = pubDestFile.absolutePath
                 MediaScannerConnection.scanFile(applicationContext, arrayOf(pubDestFile.absolutePath), arrayOf(mimeType), null)
             } catch (e: Exception) {
-                Log.w("HyperPulse", "Direct copy to categorized public Download notice: ${e.message}")
+                Log.w("PulseSphere", "Direct copy to categorized public Download notice: ${e.message}")
             }
 
             // 2. Android 10+ (API 29+) MediaStore Export for Videos, Audio, Images and Downloads
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 try {
                     val (contentUri, relativeDir) = when {
-                        isVideo -> Pair(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MOVIES + "/HyperPulse/Videos")
-                        isAudio -> Pair(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MUSIC + "/HyperPulse/Audio")
-                        isImage -> Pair(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_PICTURES + "/HyperPulse")
-                        else -> Pair(MediaStore.Downloads.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_DOWNLOADS + "/HyperPulse/$category")
+                        isVideo -> Pair(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MOVIES + "/PulseSphere/Videos")
+                        isAudio -> Pair(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_MUSIC + "/PulseSphere/Audio")
+                        isImage -> Pair(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_PICTURES + "/PulseSphere")
+                        else -> Pair(MediaStore.Downloads.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_DOWNLOADS + "/PulseSphere/$category")
                     }
 
                     val values = ContentValues().apply {
@@ -294,10 +294,10 @@ class MainActivity : FlutterActivity() {
                         values.clear()
                         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
                         contentResolver.update(uri, values, null, null)
-                        Log.d("HyperPulse", "Successfully exported $mimeType to MediaStore URI: $uri ($relativeDir)")
+                        Log.d("PulseSphere", "Successfully exported $mimeType to MediaStore URI: $uri ($relativeDir)")
                     }
                 } catch (e: Exception) {
-                    Log.w("HyperPulse", "MediaStore copy warning: ${e.message}")
+                    Log.w("PulseSphere", "MediaStore copy warning: ${e.message}")
                 }
             }
 
@@ -307,7 +307,7 @@ class MainActivity : FlutterActivity() {
                 arrayOf(targetPublicPath, file.absolutePath),
                 arrayOf(mimeType, mimeType)
             ) { path, uri ->
-                Log.d("HyperPulse", "MediaScanner indexed: $path -> $uri")
+                Log.d("PulseSphere", "MediaScanner indexed: $path -> $uri")
             }
 
             // 4. Legacy Broadcast
@@ -319,7 +319,7 @@ class MainActivity : FlutterActivity() {
 
             return targetPublicPath
         } catch (e: Exception) {
-            Log.e("HyperPulse", "exportFileToPublicStorage failed: ${e.message}")
+            Log.e("PulseSphere", "exportFileToPublicStorage failed: ${e.message}")
             return null
         }
     }
@@ -468,7 +468,7 @@ class MainActivity : FlutterActivity() {
         return try {
             val downloadPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (downloadPublic != null) {
-                val hpDownload = File(downloadPublic, "HyperPulse")
+                val hpDownload = File(downloadPublic, "PulseSphere")
                 if (!hpDownload.exists()) {
                     hpDownload.mkdirs()
                 }
@@ -483,7 +483,7 @@ class MainActivity : FlutterActivity() {
 
             val moviesPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
             if (moviesPublic != null) {
-                val hpMovies = File(moviesPublic, "HyperPulse")
+                val hpMovies = File(moviesPublic, "PulseSphere")
                 if (!hpMovies.exists()) {
                     hpMovies.mkdirs()
                 }
@@ -491,7 +491,7 @@ class MainActivity : FlutterActivity() {
 
             val musicPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
             if (musicPublic != null) {
-                val hpMusic = File(musicPublic, "HyperPulse")
+                val hpMusic = File(musicPublic, "PulseSphere")
                 if (!hpMusic.exists()) {
                     hpMusic.mkdirs()
                 }

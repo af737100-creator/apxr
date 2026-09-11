@@ -31,7 +31,7 @@ class DualNetworkPlugin : FlutterPlugin, MethodCallHandler {
     override fun onAttachedToEngine(@NonNull flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
         connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "com.hyperpulse.app/dual_network")
+        channel = MethodChannel(flutterPluginBinding.binaryMessenger, "com.pulsesphere.speedcore/dual_network")
         channel.setMethodCallHandler(this)
     }
 
