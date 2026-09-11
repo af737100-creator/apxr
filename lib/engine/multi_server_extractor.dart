@@ -128,7 +128,12 @@ class MultiServerExtractor {
     debugPrint('[MultiServerExtractor] 🚀 بدء نظام التبديل التلقائي (Failover System) للرابط: $cleanUrl');
 
     for (final server in servers) {
-      debugPrint('[MultiServerExtractor] ⏳ جاري تجربة ${server.name} (مهلة: 8 ثوانٍ)...');
+      if (server.url.contains('example.com')) {
+        debugPrint('[MultiServerExtractor] ⏭️ تجاوز ${server.name} (رابط تجريبي placeholder)...');
+        continue;
+      }
+
+      debugPrint('[MultiServerExtractor] ⏳ جاري تجربة ${server.name} (مهلة: 4 ثوانٍ)...');
 
       try {
         // Execute server extraction inside a separate background Isolate to never freeze the UI
@@ -138,7 +143,7 @@ class MultiServerExtractor {
             'url': server.url,
             'targetUrl': cleanUrl,
           });
-        }).timeout(const Duration(seconds: 8));
+        }).timeout(const Duration(seconds: 4));
 
         if (result['success'] == true && result['direct_url'] != null) {
           final directUrl = result['direct_url'] as String;

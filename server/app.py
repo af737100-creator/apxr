@@ -13,7 +13,7 @@ EXTRACTION_SEMAPHORE = threading.Semaphore(2)
 
 # Memory-optimized yt-dlp configuration for 512MB RAM
 YDL_BASE_OPTIONS = {
-    'format': 'best[ext=mp4]/best',
+    'format': 'b/best[protocol^=http]/18/22/136/140/best',
     'quiet': True,
     'no_warnings': True,
     'noplaylist': True,
@@ -21,7 +21,7 @@ YDL_BASE_OPTIONS = {
     'cachedir': False,                 # Do not use disk cache to save RAM
     'extract_flat': 'discard_in_playlist',
     'no_color': True,
-    'socket_timeout': 8,              # 8-second socket timeout
+    'socket_timeout': 10,             # 10-second socket timeout
 }
 
 def extract_stream_info(url, max_retries=2):

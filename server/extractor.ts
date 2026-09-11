@@ -1,4 +1,8 @@
 import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+import { execFile } from 'child_process';
+import { Downloader } from '@tobyg74/tiktok-api-dl';
 
 export interface ExtractionResult {
   success: boolean;
@@ -11,6 +15,163 @@ export interface ExtractionResult {
   uploader?: string;
   provider?: string;
   error?: string;
+}
+
+// Locate yt-dlp binary with auto-chmod
+function getYtDlpPath(): string {
+  const local = path.resolve(process.cwd(), 'bin/yt-dlp');
+  if (fs.existsSync(local)) {
+    try {
+      fs.chmodSync(local, 0o755);
+    } catch (_) {}
+    return local;
+  }
+  const tmp = '/tmp/yt-dlp';
+  if (fs.existsSync(tmp)) {
+    try {
+      fs.chmodSync(tmp, 0o755);
+    } catch (_) {}
+    return tmp;
+  }
+  return 'yt-dlp';
+}
+
+// Direct yt-dlp extraction engine
+export async function extractViaYtDlp(url: string, isAudio = false): Promise<ExtractionResult | null> {
+  const ytDlp = getYtDlpPath();
+  const formatArg = isAudio ? '140/bestaudio/best' : 'b/best[protocol^=http]/18/22/136/140/best';
+
+  return new Promise((resolve) => {
+    execFile(
+      ytDlp,
+      [
+        '--dump-json',
+        '--no-warnings',
+        '--no-playlist',
+        '--socket-timeout', '10',
+        '-f', formatArg,
+        url,
+      ],
+      { timeout: 12000, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          return resolve(null);
+        }
+        try {
+          const info = JSON.parse(stdout.trim());
+          let streamUrl = info.url;
+
+          // If top-level url not found, inspect formats
+          if ((!streamUrl || !streamUrl.startsWith('http')) && Array.isArray(info.formats)) {
+            const httpFormats = info.formats.filter((f: any) => f.url && f.protocol && f.protocol.startsWith('http'));
+            if (httpFormats.length > 0) {
+              const best = httpFormats[httpFormats.length - 1];
+              streamUrl = best.url;
+            }
+          }
+
+          if (streamUrl && streamUrl.startsWith('http')) {
+            const cleanTitle = (info.title || `Media_${Date.now()}`).replace(/[\\/:*?"<>|]/g, '_').trim();
+            const format = info.ext || (isAudio ? 'm4a' : 'mp4');
+            const size = info.filesize || info.filesize_approx || 0;
+
+            return resolve({
+              success: true,
+              direct_url: streamUrl,
+              title: cleanTitle,
+              format,
+              size,
+              duration: info.duration,
+              thumbnail: info.thumbnail,
+              uploader: info.uploader || info.channel,
+              provider: 'HyperPulse yt-dlp Native SpeedCore ⚡',
+            });
+          }
+        } catch (_) {}
+        return resolve(null);
+      }
+    );
+  });
+}
+
+// Dedicated TikTok extraction engine via @tobyg74/tiktok-api-dl
+export async function extractTikTokViaApiDl(rawUrl: string): Promise<ExtractionResult | null> {
+  try {
+    let targetUrl = rawUrl.trim();
+    // Resolve short redirect if vm.tiktok.com or vt.tiktok.com
+    if (targetUrl.includes('vm.tiktok.com') || targetUrl.includes('vt.tiktok.com')) {
+      try {
+        const headResp = await axios.get(targetUrl, {
+          maxRedirects: 10,
+          timeout: 4000,
+          headers: { 'User-Agent': BROWSER_UA },
+        });
+        const finalUrl = headResp.request?.res?.responseUrl || headResp.config?.url;
+        if (finalUrl && finalUrl.startsWith('http')) {
+          targetUrl = finalUrl;
+        }
+      } catch (e: any) {
+        if (e.response?.headers?.location) {
+          targetUrl = e.response.headers.location;
+        }
+      }
+    }
+
+    // Try v1 first (official API format - direct unwatermarked mp4)
+    try {
+      const v1Res = await Downloader(targetUrl, { version: 'v1' });
+      if (v1Res && v1Res.status === 'success' && v1Res.result) {
+        const item = v1Res.result;
+        const playUrl =
+          item.video?.playAddr?.[0] ||
+          item.video?.downloadAddr?.[0] ||
+          (Array.isArray(item.video?.playAddr) ? item.video.playAddr[0] : null);
+
+        if (playUrl && String(playUrl).startsWith('http')) {
+          const title = (item.desc || `TikTok_${Date.now()}`)
+            .replace(/[\\/:*?"<>|]/g, '_')
+            .trim()
+            .slice(0, 80);
+
+          return {
+            success: true,
+            direct_url: playUrl,
+            title: title || `TikTok_Video_${Date.now()}`,
+            format: 'mp4',
+            thumbnail: item.video?.cover?.[0] || (item.author as any)?.avatarThumb?.[0],
+            duration: item.video?.duration,
+            provider: 'HyperPulse TikTok SpeedCore (v1 No-Watermark) ⚡',
+          };
+        }
+      }
+    } catch (_) {}
+
+    // Fallback to v2 (SSSTik format)
+    try {
+      const v2Res = await Downloader(targetUrl, { version: 'v2' });
+      if (v2Res && v2Res.status === 'success' && v2Res.result) {
+        const playUrl = v2Res.result.video?.playAddr?.[0];
+        if (playUrl && String(playUrl).startsWith('http')) {
+          return {
+            success: true,
+            direct_url: playUrl,
+            title: `TikTok_Video_${Date.now()}`,
+            format: 'mp4',
+            provider: 'HyperPulse TikTok SpeedCore (v2 SSSTik) ⚡',
+          };
+        }
+      }
+    } catch (_) {}
+
+    // Fallback to TikWM direct call with canonical URL
+    const tikWmRes = await extractTikTokTikWM(targetUrl);
+    if (tikWmRes && tikWmRes.direct_url) {
+      return tikWmRes;
+    }
+  } catch (err: any) {
+    console.error('[TikTokExtractor] Error:', err.message);
+  }
+  return null;
 }
 
 // User-Agent presets to avoid bot blocks
@@ -1102,11 +1263,22 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
   const lower = cleanUrl.toLowerCase();
   const ytId = extractYouTubeId(cleanUrl);
 
-  // 1. DEDICATED YOUTUBE ENGINE RACE
+  // 1. DEDICATED YOUTUBE ENGINE
   if (ytId) {
-    console.log(`[UniversalExtractor] 🎯 Launching YouTube Turbo Engine for ID: ${ytId}`);
+    console.log(`[UniversalExtractor] 🎯 Launching HyperPulse Native Engine for YouTube ID: ${ytId}`);
 
-    // Race SaveTube + Invidious + Piped + Cobalt
+    // Priority 1: Native yt-dlp binary (Fastest, unblocked, extracts 1080p/720p direct stream)
+    try {
+      const ytDlpRes = await extractViaYtDlp(cleanUrl);
+      if (ytDlpRes && ytDlpRes.success && ytDlpRes.direct_url) {
+        console.log(`[UniversalExtractor] ⚡ Native yt-dlp Winner for YouTube: ${ytDlpRes.title}`);
+        return ytDlpRes;
+      }
+    } catch (e: any) {
+      console.error('[UniversalExtractor] yt-dlp error:', e.message);
+    }
+
+    // Priority 2: Race SaveTube + Invidious + Piped + Cobalt
     const ytRacers: Promise<ExtractionResult | null>[] = [
       extractYouTubeSaveTube(ytId, cleanUrl),
       extractYouTubeInvidious(ytId),
@@ -1129,25 +1301,29 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
       }
     } catch (_) {}
 
-    // Resilient fallback: Return clean direct stream structure with YouTube thumbnail & title so download proceeds instantly
     return {
-      success: true,
-      direct_url: `https://www.youtube.com/watch?v=${ytId}`,
-      title: `YouTube_Video_${ytId}`,
-      format: 'mp4',
-      size: 45 * 1024 * 1024,
-      thumbnail: `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`,
-      provider: 'PulseSphere SpeedCore Dynamic YouTube Stream ⚡',
+      success: false,
+      error: 'تعذر استخراج تيار الفيديو المباشر من يوتيوب. يرجى فتح الفيديو عبر المتصفح المدمج 🌐 لتشغيله وتحميله.',
     };
   }
 
-  // 2. DEDICATED TIKTOK ENGINE RACE
+  // 2. DEDICATED TIKTOK ENGINE
   if (lower.includes('tiktok.com') || lower.includes('douyin.com')) {
-    console.log(`[UniversalExtractor] 🎵 Launching TikTok Engine Race for: ${cleanUrl}`);
+    console.log(`[UniversalExtractor] 🎵 Launching HyperPulse TikTok Engine for: ${cleanUrl}`);
 
-    // First resolve canonical URL in case of vm.tiktok.com or vt.tiktok.com
+    // Priority 1: High-Performance @tobyg74/tiktok-api-dl (v1 and v2 direct unwatermarked mp4)
+    try {
+      const ttRes = await extractTikTokViaApiDl(cleanUrl);
+      if (ttRes && ttRes.success && ttRes.direct_url) {
+        console.log(`[UniversalExtractor] ⚡ TikTok API-DL Winner: ${ttRes.title}`);
+        return ttRes;
+      }
+    } catch (e: any) {
+      console.error('[UniversalExtractor] TikTok api-dl error:', e.message);
+    }
+
+    // Priority 2: Fallback racers
     const canonical = await resolveCanonicalUrl(cleanUrl).catch(() => cleanUrl);
-
     const tikTokRacers = [
       extractTikTokTikWM(canonical),
       extractTikTokTiklydown(canonical),
@@ -1165,21 +1341,25 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
         )
       );
       if (winner && winner.direct_url) {
-        console.log(`[UniversalExtractor] ✅ TikTok Winner: ${winner.provider}`);
+        console.log(`[UniversalExtractor] ✅ TikTok Secondary Winner: ${winner.provider}`);
         return winner;
       }
     } catch (_) {}
 
-    // Resilient fallback: Return clean direct stream structure with TikTok clip title so download proceeds instantly
     return {
-      success: true,
-      direct_url: canonical,
-      title: `TikTok_Video_${Date.now()}`,
-      format: 'mp4',
-      size: 28 * 1024 * 1024,
-      provider: 'PulseSphere SpeedCore TikTok Turbo Stream ⚡',
+      success: false,
+      error: 'تعذر استخراج تيار تيك توك المباشر. يرجى فتح الفيديو عبر المتصفح المدمج 🌐 لتشغيله وتحميله.',
     };
   }
+
+  // Try yt-dlp for all other video platforms (Instagram, Twitter/X, Facebook, Reddit, Vimeo, etc.)
+  try {
+    const genericYtDlp = await extractViaYtDlp(cleanUrl);
+    if (genericYtDlp && genericYtDlp.success && genericYtDlp.direct_url) {
+      console.log(`[UniversalExtractor] ⚡ Native yt-dlp Winner for Social Platform: ${genericYtDlp.title}`);
+      return genericYtDlp;
+    }
+  } catch (_) {}
 
   // 3. DEDICATED INSTAGRAM ENGINE RACE
   if (lower.includes('instagram.com')) {
