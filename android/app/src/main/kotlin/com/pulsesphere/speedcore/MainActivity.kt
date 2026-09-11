@@ -153,21 +153,26 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_PATH", "File path cannot be null or empty", null)
                     }
                 }
-                // Resolves the public Movies/HyperPulse directory
+                // Resolves the public Movies/PulseSphere directory
                 "getPublicMoviesPath" -> {
-                    val moviesDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "HyperPulse")
+                    val moviesDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "PulseSphere")
                     if (!moviesDir.exists()) {
                         moviesDir.mkdirs()
                     }
                     result.success(moviesDir.absolutePath)
                 }
-                // Resolves the public Download/HyperPulse directory
+                // Resolves the public Download/PulseSphere directory
                 "getPublicDownloadsPath" -> {
-                    val dlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "HyperPulse")
+                    val dlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "PulseSphere")
                     if (!dlDir.exists()) {
                         dlDir.mkdirs()
                     }
                     result.success(dlDir.absolutePath)
+                }
+                // Initializes and partitions phone folders on install/launch (Videos, Apps, Files, Audio)
+                "initAppDirectories" -> {
+                    val createdPaths = initAppStorageDirectories()
+                    result.success(createdPaths)
                 }
                 // Installs downloaded APK file directly with FileProvider
                 "installApk" -> {
@@ -462,6 +467,28 @@ class MainActivity : FlutterActivity() {
             Log.e("MainActivity", "requestAllAppPermissions error: ${e.message}")
             false
         }
+    }
+
+    private fun initAppStorageDirectories(): List<String> {
+        val created = mutableListOf<String>()
+        try {
+            createAppStorageFolders()
+            val downloadPublic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (downloadPublic != null) {
+                val root = File(downloadPublic, "PulseSphere")
+                val folders = listOf("Videos", "Apps", "Files", "Audio")
+                for (name in folders) {
+                    val folder = File(root, name)
+                    if (!folder.exists()) {
+                        folder.mkdirs()
+                    }
+                    created.add(folder.absolutePath)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "initAppStorageDirectories: ${e.message}")
+        }
+        return created
     }
 
     private fun createAppStorageFolders(): Boolean {
