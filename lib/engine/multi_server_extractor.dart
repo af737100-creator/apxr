@@ -81,9 +81,21 @@ class MultiServerExtractor {
         : wispbyteServerUrl;
 
     return [
-      ExtractionServerConfig(
+      const ExtractionServerConfig(
         priority: 1,
-        name: 'السيرفر 1 (الأساسي): سيرفرنا على Wispbyte',
+        name: 'السيرفر 1 (سحابي خارق ⚡): Cloud Run Primary Engine',
+        url: 'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
+        type: 'wispbyte',
+      ),
+      const ExtractionServerConfig(
+        priority: 2,
+        name: 'السيرفر 2 (مرآة سحابية ⚡): Cloud Run Mirror Engine',
+        url: 'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
+        type: 'wispbyte',
+      ),
+      ExtractionServerConfig(
+        priority: 3,
+        name: 'السيرفر 3 (احتياطي Wispbyte): Wispbyte Direct',
         url: activeWispbyteUrl,
         type: 'wispbyte',
       ),

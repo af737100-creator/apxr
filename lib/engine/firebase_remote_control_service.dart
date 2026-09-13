@@ -150,9 +150,10 @@ class FirebaseRemoteControlService extends ChangeNotifier {
   /// Syncs remote config & notification broadcasts from the HyperPulse Control Server
   Future<void> fetchRemoteConfigAndNotifications() async {
     final candidateHosts = [
+      'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
+      'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
       'http://10.0.2.2:3000',
       'http://localhost:3000',
-      'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
     ];
 
     for (final host in candidateHosts) {

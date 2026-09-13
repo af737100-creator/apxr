@@ -117,16 +117,60 @@ class CloudExtractorService {
   /// Candidate backend server endpoints for local and cloud environments
   List<String> get _candidateServerEndpoints {
     final list = <String>[];
+
+    // 1. Primary Live Cloud Run Servers
+    list.add('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
+    list.add('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
+
     if (primaryWispbyteUrl.isNotEmpty && primaryWispbyteUrl != defaultWispbyteEndpoint) {
       list.add(primaryWispbyteUrl);
     }
-    // Android emulator mapping to host machine
-    list.add('http://10.0.2.2:3000/api/extract?url=');
-    // Localhost / Web mapping
-    list.add('http://localhost:3000/api/extract?url=');
-    // Default Wispbyte fallback
+    // Localhost / Emulator mapping for development
+    list.add('http://10.0.2.2:3000/api/extract');
+    list.add('http://localhost:3000/api/extract');
     list.add(defaultWispbyteEndpoint);
     return list;
+  }
+
+  /// Resolves shortened URLs (vt.tiktok.com, vm.tiktok.com, youtu.be, fb.watch, etc.) to canonical full URLs
+  Future<String> resolveCanonicalUrl(String rawUrl) async {
+    final cleanUrl = SmartUrlFilter.extractRealTargetUrl(rawUrl.trim());
+    final lower = cleanUrl.toLowerCase();
+
+    if (lower.contains('vt.tiktok.com') ||
+        lower.contains('vm.tiktok.com') ||
+        lower.contains('tiktok.com/t/') ||
+        lower.contains('youtu.be/') ||
+        lower.contains('fb.watch') ||
+        lower.contains('instagr.am') ||
+        lower.contains('bit.ly') ||
+        lower.contains('t.co')) {
+      try {
+        final isTikTok = lower.contains('tiktok.com');
+        final redirectDio = Dio(
+          BaseOptions(
+            connectTimeout: const Duration(seconds: 5),
+            receiveTimeout: const Duration(seconds: 5),
+            followRedirects: true,
+            maxRedirects: 10,
+            headers: {
+              'User-Agent': isTikTok
+                  ? 'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
+                  : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+          ),
+        );
+        final res = await redirectDio.get(cleanUrl);
+        final realUrl = res.realUri.toString();
+        if (realUrl.isNotEmpty && realUrl.startsWith('http')) {
+          debugPrint('✅ [CloudExtractorService] Unshortened $cleanUrl -> $realUrl');
+          return realUrl;
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] Notice unshortening $cleanUrl: $e');
+      }
+    }
+    return cleanUrl;
   }
 
   /// High-reliability TikTok / Douyin direct extractor via TikWM Engine (No Watermark)
@@ -261,7 +305,8 @@ class CloudExtractorService {
 
   /// Primary Failover Media Extraction
   Future<CloudExtractedMedia> extractDirectMedia(String webpageUrl) async {
-    final cleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
+    final rawCleanUrl = SmartUrlFilter.extractRealTargetUrl(webpageUrl.trim());
+    final cleanUrl = await resolveCanonicalUrl(rawCleanUrl);
 
     // 0. Direct downloadable file bypass (APK, ZIP, ISO, direct mp4, etc.)
     if (SmartUrlFilter.isDownloadableFileUrl(cleanUrl) && !isSocialVideoPlatform(cleanUrl)) {

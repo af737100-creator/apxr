@@ -446,20 +446,28 @@ async function resolveCanonicalUrl(url: string): Promise<string> {
     lower.includes('instagram.com/share/') ||
     lower.includes('vm.tiktok.com') ||
     lower.includes('vt.tiktok.com') ||
+    lower.includes('tiktok.com/t/') ||
     lower.includes('youtu.be/') ||
     lower.includes('bit.ly/') ||
     lower.includes('t.co/')
   ) {
     try {
+      const isTikTok = lower.includes('tiktok.com');
       const resp = await axios.get(url, {
-        maxRedirects: 5,
-        timeout: 4000,
-        headers: { 'User-Agent': BROWSER_UA },
+        maxRedirects: 10,
+        timeout: 5000,
+        headers: { 'User-Agent': isTikTok ? MOBILE_UA : BROWSER_UA },
       });
-      if (resp.request?.res?.responseUrl) {
-        return resp.request.res.responseUrl;
+      const finalUrl = resp.request?.res?.responseUrl || resp.config?.url;
+      if (finalUrl && finalUrl.startsWith('http')) {
+        return finalUrl;
       }
-    } catch (_) {}
+    } catch (e: any) {
+      if (e.response?.headers?.location) {
+        const loc = e.response.headers.location;
+        if (loc.startsWith('http')) return loc;
+      }
+    }
   }
   return url;
 }

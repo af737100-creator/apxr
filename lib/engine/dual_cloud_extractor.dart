@@ -189,7 +189,13 @@ class DualCloudExtractor {
         client.connectionTimeout = const Duration(seconds: 3);
         final request = await client.getUrl(Uri.parse(current));
         request.followRedirects = false;
-        request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        final isTikTok = lower.contains('tiktok.com');
+        request.headers.set(
+          HttpHeaders.userAgentHeader,
+          isTikTok
+              ? 'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
+              : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        );
         final response = await request.close();
 
         if (response.isRedirect) {
@@ -248,6 +254,8 @@ class DualCloudExtractor {
   static Future<DualExtractionResult?> _tryLocalServerProxy(String videoUrl) async {
     final client = http.Client();
     final candidateUris = <Uri>[
+      Uri.parse('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
+      Uri.parse('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
       Uri.parse('http://10.0.2.2:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
       Uri.parse('http://localhost:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
       if (primaryRailwayUrl.isNotEmpty)
