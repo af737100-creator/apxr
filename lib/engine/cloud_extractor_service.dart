@@ -90,7 +90,7 @@ class CloudExtractorService {
   final String primaryWispbyteUrl;
 
   // Server List Configuration
-  static const String defaultWispbyteEndpoint = 'http://78.154.103.45:9864/extract?url=';
+  static const String defaultWispbyteEndpoint = '';
   static const List<String> cobaltBackupServers = [
     'https://api.cobalt.tools/api/json',
     'https://co.wuk.sh/api/json',
@@ -104,9 +104,9 @@ class CloudExtractorService {
         _dio = customDio ??
             Dio(
               BaseOptions(
-                connectTimeout: const Duration(seconds: 10),
-                receiveTimeout: const Duration(seconds: 10),
-                sendTimeout: const Duration(seconds: 10),
+                connectTimeout: const Duration(milliseconds: 3500),
+                receiveTimeout: const Duration(milliseconds: 3500),
+                sendTimeout: const Duration(milliseconds: 3500),
                 headers: {
                   'Accept': 'application/json, text/plain, */*',
                   'User-Agent':
@@ -126,10 +126,6 @@ class CloudExtractorService {
     if (primaryWispbyteUrl.isNotEmpty && primaryWispbyteUrl != defaultWispbyteEndpoint) {
       list.add(primaryWispbyteUrl);
     }
-    // Localhost / Emulator mapping for development
-    list.add('http://10.0.2.2:3000/api/extract');
-    list.add('http://localhost:3000/api/extract');
-    list.add(defaultWispbyteEndpoint);
     return list;
   }
 
@@ -250,58 +246,76 @@ class CloudExtractorService {
     return null;
   }
 
-  /// Extraction via candidate backend API servers (Node/yt-dlp)
+  /// Extraction via candidate backend API servers with Parallel Racing ⚡
   Future<CloudExtractedMedia?> _extractViaBackendServers(String cleanUrl) async {
-    for (final baseEndpoint in _candidateServerEndpoints) {
-      try {
-        final targetReq = baseEndpoint.endsWith('=')
-            ? '$baseEndpoint${Uri.encodeComponent(cleanUrl)}'
-            : '$baseEndpoint?url=${Uri.encodeComponent(cleanUrl)}';
+    final endpoints = _candidateServerEndpoints;
+    if (endpoints.isEmpty) return null;
 
-        final response = await _dio.get(
-          targetReq,
-          options: Options(
-            sendTimeout: const Duration(seconds: 8),
-            receiveTimeout: const Duration(seconds: 8),
-          ),
-        );
+    final completer = Completer<CloudExtractedMedia?>();
+    int pending = endpoints.length;
 
-        if (response.statusCode == 200 && response.data != null) {
-          final dynamic raw = response.data;
-          final Map<String, dynamic> data = raw is Map<String, dynamic>
-              ? raw
-              : (raw is String ? jsonDecode(raw) : {});
+    for (final baseEndpoint in endpoints) {
+      () async {
+        try {
+          final targetReq = baseEndpoint.endsWith('=')
+              ? '$baseEndpoint${Uri.encodeComponent(cleanUrl)}'
+              : '$baseEndpoint?url=${Uri.encodeComponent(cleanUrl)}';
 
-          if (data['success'] == true && data['direct_url'] != null) {
-            final directUrl = data['direct_url'].toString();
-            if (directUrl.isNotEmpty) {
-              final title = data['title']?.toString() ?? 'Media_${DateTime.now().millisecondsSinceEpoch}';
-              final format = data['format']?.toString() ?? 'mp4';
-              final thumb = data['thumbnail']?.toString();
-              final rawSize = data['size'];
-              final int? size = rawSize is int ? rawSize : int.tryParse(rawSize?.toString() ?? '');
+          final response = await _dio.get(
+            targetReq,
+            options: Options(
+              sendTimeout: const Duration(milliseconds: 3500),
+              receiveTimeout: const Duration(milliseconds: 3500),
+            ),
+          );
 
-              debugPrint('✅ [Backend Extractor] نجح الاستخراج عبر ($baseEndpoint)');
-              return CloudExtractedMedia(
-                success: true,
-                originalUrl: cleanUrl,
-                directStreamUrl: directUrl,
-                title: CloudExtractedMedia.sanitizeFilename(title, format),
-                format: format,
-                quality: data['provider']?.toString() ?? 'HyperPulse SpeedCore ⚡',
-                thumbnailUrl: thumb,
-                estimatedSizeBytes: size,
-                serverUsed: baseEndpoint,
-                isDirectFallback: false,
-              );
+          if (response.statusCode == 200 && response.data != null && !completer.isCompleted) {
+            final dynamic raw = response.data;
+            final Map<String, dynamic> data = raw is Map<String, dynamic>
+                ? raw
+                : (raw is String ? jsonDecode(raw) : {});
+
+            if (data['success'] == true && data['direct_url'] != null) {
+              final directUrl = data['direct_url'].toString();
+              if (directUrl.isNotEmpty && !completer.isCompleted) {
+                final title = data['title']?.toString() ?? 'Media_${DateTime.now().millisecondsSinceEpoch}';
+                final format = data['format']?.toString() ?? 'mp4';
+                final thumb = data['thumbnail']?.toString();
+                final rawSize = data['size'];
+                final int? size = rawSize is int ? rawSize : int.tryParse(rawSize?.toString() ?? '');
+
+                debugPrint('✅ [Backend Extractor ⚡ Race Winner] ($baseEndpoint)');
+                completer.complete(CloudExtractedMedia(
+                  success: true,
+                  originalUrl: cleanUrl,
+                  directStreamUrl: directUrl,
+                  title: CloudExtractedMedia.sanitizeFilename(title, format),
+                  format: format,
+                  quality: data['provider']?.toString() ?? 'HyperPulse SpeedCore ⚡',
+                  thumbnailUrl: thumb,
+                  estimatedSizeBytes: size,
+                  serverUsed: baseEndpoint,
+                  isDirectFallback: false,
+                ));
+                return;
+              }
             }
           }
+        } catch (_) {
+        } finally {
+          pending--;
+          if (pending == 0 && !completer.isCompleted) {
+            completer.complete(null);
+          }
         }
-      } catch (_) {
-        // Continue trying next candidate server
-      }
+      }();
     }
-    return null;
+
+    try {
+      return await completer.future.timeout(const Duration(milliseconds: 3800));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Primary Failover Media Extraction
@@ -358,8 +372,8 @@ class CloudExtractorService {
             'filenamePattern': 'classic',
           },
           options: Options(
-            sendTimeout: const Duration(seconds: 8),
-            receiveTimeout: const Duration(seconds: 8),
+            sendTimeout: const Duration(seconds: 3),
+            receiveTimeout: const Duration(seconds: 3),
             headers: {
               'Accept': 'application/json',
               'Content-Type': 'application/json',

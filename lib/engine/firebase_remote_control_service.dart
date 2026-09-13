@@ -152,8 +152,6 @@ class FirebaseRemoteControlService extends ChangeNotifier {
     final candidateHosts = [
       'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
       'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
-      'http://10.0.2.2:3000',
-      'http://localhost:3000',
     ];
 
     for (final host in candidateHosts) {
@@ -163,7 +161,7 @@ class FirebaseRemoteControlService extends ChangeNotifier {
         final cfgRes = await client.get(
           Uri.parse('$host/api/firebase/remote-config'),
           headers: {'Accept': 'application/json'},
-        ).timeout(const Duration(seconds: 4));
+        ).timeout(const Duration(seconds: 2));
 
         if (cfgRes.statusCode == 200) {
           final data = jsonDecode(utf8.decode(cfgRes.bodyBytes));
@@ -184,7 +182,7 @@ class FirebaseRemoteControlService extends ChangeNotifier {
         final notifRes = await client.get(
           Uri.parse('$host/api/firebase/notifications'),
           headers: {'Accept': 'application/json'},
-        ).timeout(const Duration(seconds: 4));
+        ).timeout(const Duration(seconds: 2));
 
         if (notifRes.statusCode == 200) {
           final data = jsonDecode(utf8.decode(notifRes.bodyBytes));

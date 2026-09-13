@@ -467,7 +467,7 @@ class DownloadManagerService extends ChangeNotifier {
         task: task,
         deviceMetrics: deviceProfile,
         ramBufferThresholdMb: 64,
-        forceSingleStream: isSocial,
+        forceSingleStream: false,
       );
 
       // On completion:

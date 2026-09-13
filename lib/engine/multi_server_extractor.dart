@@ -58,23 +58,24 @@ class MultiServerExtractionResult {
 /// 4. Backup 3: https://cobalt.stream/api/json
 /// 5. Backup 4: https://cobalt.hyonsu.com/api/json
 class MultiServerExtractor {
-  /// Default or custom Wispbyte server URL (can be updated dynamically at runtime)
-  static String wispbyteServerUrl = 'http://78.154.103.45:9864';
+  /// Default or custom Wispbyte server URL (can be updated dynamically at runtime via Firebase Remote Config)
+  static String wispbyteServerUrl = '';
 
   /// Updates the Wispbyte server URL dynamically
   static void setWispbyteServerUrl(String url) {
-    if (url.trim().isNotEmpty) {
-      wispbyteServerUrl = url.trim();
+    final trimmed = url.trim();
+    if (trimmed.isNotEmpty && !trimmed.contains('78.154.103.45')) {
+      wispbyteServerUrl = trimmed;
       debugPrint('[MultiServerExtractor] 🔗 Updated Wispbyte Server URL to: $wispbyteServerUrl');
     }
   }
 
   /// Builds the prioritized list of extraction servers:
-  /// Server 1 (Primary): Wispbyte server
-  /// Server 2 (Backup): https://api.cobalt.tools/api/json
-  /// Server 3 (Backup): https://co.wuk.sh/api/json
-  /// Server 4 (Backup): https://cobalt.stream/api/json
-  /// Server 5 (Backup): https://cobalt.hyonsu.com/api/json
+  /// Server 1 (Primary): Cloud Run Primary Engine
+  /// Server 2 (Backup): Cloud Run Mirror Engine
+  /// Server 3 (Backup): Custom server if provided
+  /// Server 4 (Backup): Cobalt Tools API
+  /// Server 5 (Backup): Wuk.sh Cobalt API
   static List<ExtractionServerConfig> getServers({String? customWispbyteUrl}) {
     final activeWispbyteUrl = (customWispbyteUrl != null && customWispbyteUrl.trim().isNotEmpty)
         ? customWispbyteUrl.trim()
@@ -93,40 +94,35 @@ class MultiServerExtractor {
         url: 'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
         type: 'wispbyte',
       ),
-      ExtractionServerConfig(
-        priority: 3,
-        name: 'السيرفر 3 (احتياطي Wispbyte): Wispbyte Direct',
-        url: activeWispbyteUrl,
-        type: 'wispbyte',
-      ),
+      if (activeWispbyteUrl.isNotEmpty && !activeWispbyteUrl.contains('78.154.103.45'))
+        ExtractionServerConfig(
+          priority: 3,
+          name: 'السيرفر 3 (احتياطي سحابي مخصص): Custom Server Direct',
+          url: activeWispbyteUrl,
+          type: 'wispbyte',
+        ),
       const ExtractionServerConfig(
-        priority: 2,
-        name: 'السيرفر 2 (احتياطي): Cobalt Tools API',
+        priority: 4,
+        name: 'السيرفر 4 (احتياطي): Cobalt Tools API',
         url: 'https://api.cobalt.tools/api/json',
         type: 'cobalt',
       ),
       const ExtractionServerConfig(
-        priority: 3,
-        name: 'السيرفر 3 (احتياطي): Wuk.sh Cobalt API',
+        priority: 5,
+        name: 'السيرفر 5 (احتياطي): Wuk.sh Cobalt API',
         url: 'https://co.wuk.sh/api/json',
         type: 'cobalt',
       ),
       const ExtractionServerConfig(
-        priority: 4,
-        name: 'السيرفر 4 (احتياطي): Cobalt Stream API',
+        priority: 6,
+        name: 'السيرفر 6 (احتياطي): Cobalt Stream API',
         url: 'https://cobalt.stream/api/json',
-        type: 'cobalt',
-      ),
-      const ExtractionServerConfig(
-        priority: 5,
-        name: 'السيرفر 5 (احتياطي): Cobalt Hyonsu API',
-        url: 'https://cobalt.hyonsu.com/api/json',
         type: 'cobalt',
       ),
     ];
   }
 
-  /// Main extraction method with sequential 8-second failover in isolated background threads
+  /// Main extraction method with Parallel Racing for Cloud servers and fast failover
   static Future<MultiServerExtractionResult> extract(
     String targetUrl, {
     String? customWispbyteUrl,
@@ -137,33 +133,77 @@ class MultiServerExtractor {
     }
 
     final servers = getServers(customWispbyteUrl: customWispbyteUrl);
-    debugPrint('[MultiServerExtractor] 🚀 بدء نظام التبديل التلقائي (Failover System) للرابط: $cleanUrl');
+    debugPrint('[MultiServerExtractor] 🚀 بدء نظام الاستخراج المتوازي فائق السرعة (Parallel Racing) للرابط: $cleanUrl');
 
-    for (final server in servers) {
-      if (server.url.contains('example.com')) {
-        debugPrint('[MultiServerExtractor] ⏭️ تجاوز ${server.name} (رابط تجريبي placeholder)...');
-        continue;
+    // 1. Parallel Racing across primary Cloud Run servers
+    final cloudServers = servers.where((s) => s.type == 'wispbyte').toList();
+    if (cloudServers.isNotEmpty) {
+      final completer = Completer<MultiServerExtractionResult?>();
+      int pending = cloudServers.length;
+
+      for (final server in cloudServers) {
+        () async {
+          try {
+            debugPrint('[MultiServerExtractor] ⚡ سباق متزامن مع: ${server.name}...');
+            final result = await Isolate.run<Map<String, dynamic>>(() async {
+              return await _queryServerInIsolate({
+                'type': server.type,
+                'url': server.url,
+                'targetUrl': cleanUrl,
+              });
+            }).timeout(const Duration(milliseconds: 3500));
+
+            if (result['success'] == true && result['direct_url'] != null && !completer.isCompleted) {
+              final directUrl = result['direct_url'] as String;
+              if (directUrl.isNotEmpty && !completer.isCompleted) {
+                debugPrint('[MultiServerExtractor] 🏆 فاز في السباق المتزامن: ${server.name} ⚡');
+                completer.complete(MultiServerExtractionResult(
+                  success: true,
+                  directUrl: directUrl,
+                  title: result['title'] as String?,
+                  format: result['format'] as String? ?? 'mp4',
+                  size: result['size'] as int?,
+                  thumbnailUrl: result['thumbnail'] as String?,
+                  serverUsed: server.name,
+                ));
+                return;
+              }
+            }
+          } catch (_) {
+          } finally {
+            pending--;
+            if (pending == 0 && !completer.isCompleted) {
+              completer.complete(null);
+            }
+          }
+        }();
       }
 
-      debugPrint('[MultiServerExtractor] ⏳ جاري تجربة ${server.name} (مهلة: 4 ثوانٍ)...');
-
       try {
-        // Execute server extraction inside a separate background Isolate to never freeze the UI
+        final raceWinner = await completer.future.timeout(const Duration(milliseconds: 3800));
+        if (raceWinner != null && raceWinner.success) {
+          return raceWinner;
+        }
+      } catch (_) {}
+    }
+
+    // 2. Sequential fallback to Cobalt backup servers
+    final backupServers = servers.where((s) => s.type != 'wispbyte').toList();
+    for (final server in backupServers) {
+      debugPrint('[MultiServerExtractor] ⏳ تجربة سيرفر احتياطي: ${server.name}...');
+      try {
         final result = await Isolate.run<Map<String, dynamic>>(() async {
           return await _queryServerInIsolate({
             'type': server.type,
             'url': server.url,
             'targetUrl': cleanUrl,
           });
-        }).timeout(const Duration(seconds: 4));
+        }).timeout(const Duration(seconds: 3));
 
         if (result['success'] == true && result['direct_url'] != null) {
           final directUrl = result['direct_url'] as String;
           if (directUrl.isNotEmpty) {
-            // Immediate success: Short-circuit and cancel any remaining attempts!
-            debugPrint('[MultiServerExtractor] ✅ نجح الاستخراج فوراً عبر السيرفر: ${server.name} ⚡');
-            debugPrint('[MultiServerExtractor] 🔗 الرابط المباشر: $directUrl');
-
+            debugPrint('[MultiServerExtractor] ✅ نجح الاستخراج عبر الاحتياطي: ${server.name}');
             return MultiServerExtractionResult(
               success: true,
               directUrl: directUrl,
@@ -175,13 +215,7 @@ class MultiServerExtractor {
             );
           }
         }
-
-        debugPrint('[MultiServerExtractor] ⚠️ لم ينجح ${server.name}، الانتقال فوراً للسيرفر التالي...');
-      } on TimeoutException {
-        debugPrint('[MultiServerExtractor] ⏱️ انتهت مهلة (8 ثوانٍ) لـ ${server.name}، الانتقال فوراً للسيرفر التالي...');
-      } catch (e) {
-        debugPrint('[MultiServerExtractor] ❌ حدث خطأ في ${server.name}: $e، الانتقال فوراً للسيرفر التالي...');
-      }
+      } catch (_) {}
     }
 
     // If all servers failed:
@@ -189,7 +223,7 @@ class MultiServerExtractor {
     debugPrint('[MultiServerExtractor] ❌ فشلت جميع السيرفرات في استخراج الفيديو.');
 
     // Log the failure in Firebase Analytics for monitoring
-    await logFailureToFirebaseAnalytics(cleanUrl, 'All 5 Failover extraction servers failed');
+    await logFailureToFirebaseAnalytics(cleanUrl, 'All Failover extraction servers failed');
 
     return MultiServerExtractionResult.failed(finalErrorMessage);
   }
@@ -201,7 +235,7 @@ class MultiServerExtractor {
     final targetUrl = args['targetUrl']!;
 
     final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 7);
+    client.connectionTimeout = const Duration(seconds: 3);
 
     try {
       if (serverType == 'wispbyte') {
@@ -211,9 +245,9 @@ class MultiServerExtractor {
 
         final request = await client.getUrl(uri);
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'PulseSphere-SpeedCore/4.2');
+        request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');
 
-        final response = await request.close().timeout(const Duration(seconds: 7));
+        final response = await request.close().timeout(const Duration(seconds: 3));
         final body = await response.transform(utf8.decoder).join();
 
         if (response.statusCode == 200) {
@@ -236,7 +270,7 @@ class MultiServerExtractor {
         final request = await client.postUrl(uri);
         request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-        request.headers.set(HttpHeaders.userAgentHeader, 'PulseSphere-SpeedCore/4.2');
+        request.headers.set(HttpHeaders.userAgentHeader, 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');
 
         final payload = jsonEncode({
           'url': targetUrl,
@@ -247,7 +281,7 @@ class MultiServerExtractor {
         });
         request.write(payload);
 
-        final response = await request.close().timeout(const Duration(seconds: 7));
+        final response = await request.close().timeout(const Duration(seconds: 3));
         final body = await response.transform(utf8.decoder).join();
 
         if (response.statusCode == 200) {
@@ -292,9 +326,9 @@ class MultiServerExtractor {
 
       // Attempt to report to backend / Firebase telemetry endpoint if configured
       final telemetryClient = HttpClient();
-      telemetryClient.connectionTimeout = const Duration(seconds: 3);
+      telemetryClient.connectionTimeout = const Duration(seconds: 1);
       try {
-        final uri = Uri.parse('http://10.0.2.2:3000/api/telemetry/extractor-failure');
+        final uri = Uri.parse('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/telemetry/extractor-failure');
         final req = await telemetryClient.postUrl(uri);
         req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
         req.write(jsonEncode({

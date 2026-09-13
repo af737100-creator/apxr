@@ -1119,7 +1119,8 @@ async function extractUniversalSocialMulti(url: string): Promise<ExtractionResul
 
 // Python Extractor check (Railway or local app.py on port 8080)
 async function checkPythonExtractor(url: string): Promise<ExtractionResult | null> {
-  const pythonUrl = process.env.EXTRACTOR_SERVER_URL || process.env.PYTHON_EXTRACTOR_URL || 'http://127.0.0.1:8080/extract';
+  const pythonUrl = process.env.EXTRACTOR_SERVER_URL || process.env.PYTHON_EXTRACTOR_URL;
+  if (!pythonUrl) return null;
   try {
     const resp = await axios.get(pythonUrl, {
       params: { url },
@@ -1272,23 +1273,12 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
   const lower = cleanUrl.toLowerCase();
   const ytId = extractYouTubeId(cleanUrl);
 
-  // 1. DEDICATED YOUTUBE ENGINE
+  // 1. DEDICATED YOUTUBE ENGINE with Parallel Racing ⚡
   if (ytId) {
-    console.log(`[UniversalExtractor] 🎯 Launching HyperPulse Native Engine for YouTube ID: ${ytId}`);
+    console.log(`[UniversalExtractor] 🎯 Launching Instant Parallel Race for YouTube ID: ${ytId}`);
 
-    // Priority 1: Native yt-dlp binary (Fastest, unblocked, extracts 1080p/720p direct stream)
-    try {
-      const ytDlpRes = await extractViaYtDlp(cleanUrl);
-      if (ytDlpRes && ytDlpRes.success && ytDlpRes.direct_url) {
-        console.log(`[UniversalExtractor] ⚡ Native yt-dlp Winner for YouTube: ${ytDlpRes.title}`);
-        return ytDlpRes;
-      }
-    } catch (e: any) {
-      console.error('[UniversalExtractor] yt-dlp error:', e.message);
-    }
-
-    // Priority 2: Race SaveTube + Invidious + Piped + Cobalt
     const ytRacers: Promise<ExtractionResult | null>[] = [
+      extractViaYtDlp(cleanUrl),
       extractYouTubeSaveTube(ytId, cleanUrl),
       extractYouTubeInvidious(ytId),
       extractYouTubePiped(ytId),
@@ -1305,7 +1295,7 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
         )
       );
       if (winner && winner.direct_url) {
-        console.log(`[UniversalExtractor] ✅ YouTube Winner: ${winner.provider}`);
+        console.log(`[UniversalExtractor] 🏆 YouTube Race Winner: ${winner.provider}`);
         return winner;
       }
     } catch (_) {}
@@ -1316,28 +1306,16 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
     };
   }
 
-  // 2. DEDICATED TIKTOK ENGINE
+  // 2. DEDICATED TIKTOK ENGINE with Instant Parallel Racing ⚡
   if (lower.includes('tiktok.com') || lower.includes('douyin.com')) {
-    console.log(`[UniversalExtractor] 🎵 Launching HyperPulse TikTok Engine for: ${cleanUrl}`);
+    console.log(`[UniversalExtractor] 🎵 Launching Instant Parallel Race for TikTok: ${cleanUrl}`);
 
-    // Priority 1: High-Performance @tobyg74/tiktok-api-dl (v1 and v2 direct unwatermarked mp4)
-    try {
-      const ttRes = await extractTikTokViaApiDl(cleanUrl);
-      if (ttRes && ttRes.success && ttRes.direct_url) {
-        console.log(`[UniversalExtractor] ⚡ TikTok API-DL Winner: ${ttRes.title}`);
-        return ttRes;
-      }
-    } catch (e: any) {
-      console.error('[UniversalExtractor] TikTok api-dl error:', e.message);
-    }
-
-    // Priority 2: Fallback racers
-    const canonical = await resolveCanonicalUrl(cleanUrl).catch(() => cleanUrl);
-    const tikTokRacers = [
-      extractTikTokTikWM(canonical),
-      extractTikTokTiklydown(canonical),
-      extractTikTokLoveTik(canonical),
-      extractCobalt(canonical),
+    const tikTokRacers: Promise<ExtractionResult | null>[] = [
+      extractTikTokTikWM(cleanUrl),
+      extractTikTokViaApiDl(cleanUrl),
+      extractTikTokTiklydown(cleanUrl),
+      extractTikTokLoveTik(cleanUrl),
+      extractCobalt(cleanUrl),
     ];
 
     try {
@@ -1350,7 +1328,7 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
         )
       );
       if (winner && winner.direct_url) {
-        console.log(`[UniversalExtractor] ✅ TikTok Secondary Winner: ${winner.provider}`);
+        console.log(`[UniversalExtractor] 🏆 TikTok Race Winner: ${winner.provider}`);
         return winner;
       }
     } catch (_) {}

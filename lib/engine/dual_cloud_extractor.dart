@@ -250,45 +250,64 @@ class DualCloudExtractor {
     }
   }
 
-  /// 1. Local Node/Express Backend Multi-Resolver (/api/extract)
+  /// 1. Cloud Run Backend Multi-Resolver (/api/extract) with Parallel Racing ⚡
   static Future<DualExtractionResult?> _tryLocalServerProxy(String videoUrl) async {
-    final client = http.Client();
     final candidateUris = <Uri>[
       Uri.parse('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
       Uri.parse('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
-      Uri.parse('http://10.0.2.2:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
-      Uri.parse('http://localhost:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
       if (primaryRailwayUrl.isNotEmpty)
         Uri.parse(primaryRailwayUrl).replace(queryParameters: {'url': videoUrl}),
     ];
 
-    for (final uri in candidateUris) {
-      try {
-        final res = await client.get(
-          uri,
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'HyperPulse-Dart-Engine/4.0',
-          },
-        ).timeout(const Duration(seconds: 8));
+    final completer = Completer<DualExtractionResult?>();
+    int pending = candidateUris.length;
 
-        if (res.statusCode == 200) {
-          final data = jsonDecode(utf8.decode(res.bodyBytes));
-          if (data is Map && data['success'] == true && data['direct_url'] != null) {
-            client.close();
-            return DualExtractionResult.successful(
-              directUrl: data['direct_url'].toString(),
-              title: data['title']?.toString() ?? 'HyperPulse_Media',
-              format: data['format']?.toString() ?? 'mp4',
-              size: data['size'] is num ? (data['size'] as num).toInt() : 0,
-              providerUsed: data['provider']?.toString() ?? 'محرك HyperPulse السحابي المدمج ⚡',
-            );
+    for (final uri in candidateUris) {
+      () async {
+        final client = http.Client();
+        try {
+          final res = await client.get(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36',
+            },
+          ).timeout(const Duration(milliseconds: 3500));
+
+          if (res.statusCode == 200 && !completer.isCompleted) {
+            final data = jsonDecode(utf8.decode(res.bodyBytes));
+            if (data is Map && data['success'] == true && data['direct_url'] != null) {
+              final directUrl = data['direct_url'].toString();
+              if (directUrl.isNotEmpty && !completer.isCompleted) {
+                completer.complete(
+                  DualExtractionResult.successful(
+                    directUrl: directUrl,
+                    title: data['title']?.toString() ?? 'HyperPulse_Media',
+                    format: data['format']?.toString() ?? 'mp4',
+                    size: data['size'] is num ? (data['size'] as num).toInt() : 0,
+                    providerUsed: data['provider']?.toString() ?? 'محرك Cloud Run السحابي ⚡',
+                  ),
+                );
+                return;
+              }
+            }
+          }
+        } catch (_) {
+        } finally {
+          client.close();
+          pending--;
+          if (pending == 0 && !completer.isCompleted) {
+            completer.complete(null);
           }
         }
-      } catch (_) {}
+      }();
     }
-    client.close();
-    return null;
+
+    try {
+      return await completer.future.timeout(const Duration(milliseconds: 3800));
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 2. Direct SaveTube Engine (YouTube)
