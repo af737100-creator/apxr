@@ -49,6 +49,7 @@ export async function extractViaYtDlp(url: string, isAudio = false): Promise<Ext
         '--no-warnings',
         '--no-playlist',
         '--socket-timeout', '10',
+        '--js-runtimes', 'node:node',
         '-f', formatArg,
         url,
       ],

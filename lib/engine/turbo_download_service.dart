@@ -478,20 +478,43 @@ class TurboDownloadService {
     task.threadCount = 4;
 
     final yt = YoutubeExplode();
+    StreamInfo? targetStreamInfo;
     try {
       final manifest = await yt.videos.streamsClient.getManifest(VideoId(videoId));
       
       final muxedStreams = manifest.muxed.sortByVideoQuality();
-      StreamInfo? targetStreamInfo = muxedStreams.isNotEmpty ? muxedStreams.last : null;
+      targetStreamInfo = muxedStreams.isNotEmpty ? muxedStreams.last : null;
 
       if (targetStreamInfo == null) {
         final videoOnly = manifest.videoOnly.sortByVideoQuality();
         if (videoOnly.isNotEmpty) targetStreamInfo = videoOnly.last;
       }
+    } catch (ytErr) {
+      debugPrint('[TurboDownloadService] YoutubeExplode manifest error: $ytErr. Trying CloudExtractorService...');
+    } finally {
+      yt.close();
+    }
 
-      if (targetStreamInfo == null) {
-        throw Exception('لم يتم العثور على تيار فيديو مناسب للتحميل');
+    if (targetStreamInfo == null) {
+      // Fallback: Use CloudExtractorService (backend yt-dlp / cloud failover)
+      final cloudExtractor = CloudExtractorService();
+      final cloudRes = await cloudExtractor.extractDirectMedia(task.sourceUrl);
+      if (cloudRes.success && cloudRes.directStreamUrl.isNotEmpty) {
+        debugPrint('✅ [TurboDownloadService] نجح استخراج YouTube عبر المحرك السحابي: ${cloudRes.directStreamUrl}');
+        task.sourceUrl = cloudRes.directStreamUrl;
+        if (cloudRes.estimatedSizeBytes != null && cloudRes.estimatedSizeBytes! > 0) {
+          task.totalSizeBytes = cloudRes.estimatedSizeBytes!;
+        }
+        await downloadSingleStream(
+          task: task,
+          ramBufferThresholdMb: ramBufferThresholdMb,
+        );
+        return;
       }
+      throw Exception('لم يتم العثور على تيار فيديو مناسب للتحميل');
+    }
+
+    try {
 
       task.totalSizeBytes = targetStreamInfo.size.totalBytes;
 
@@ -586,8 +609,9 @@ class TurboDownloadService {
       }
 
       singleSegment.status = ChunkStatus.completed;
-    } finally {
-      yt.close();
+    } catch (streamErr) {
+      debugPrint('[TurboDownloadService] YouTube stream download error: $streamErr');
+      rethrow;
     }
   }
 

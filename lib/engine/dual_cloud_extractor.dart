@@ -247,34 +247,40 @@ class DualCloudExtractor {
   /// 1. Local Node/Express Backend Multi-Resolver (/api/extract)
   static Future<DualExtractionResult?> _tryLocalServerProxy(String videoUrl) async {
     final client = http.Client();
-    try {
-      final uri = Uri.parse('/api/extract').replace(queryParameters: {'url': videoUrl});
-      final res = await client.get(
-        uri,
-        headers: {
-          'Accept': 'application/json',
-          'User-Agent': 'HyperPulse-Dart-Engine/4.0',
-        },
-      ).timeout(quickTimeout);
+    final candidateUris = <Uri>[
+      Uri.parse('http://10.0.2.2:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
+      Uri.parse('http://localhost:3000/api/extract').replace(queryParameters: {'url': videoUrl}),
+      if (primaryRailwayUrl.isNotEmpty)
+        Uri.parse(primaryRailwayUrl).replace(queryParameters: {'url': videoUrl}),
+    ];
 
-      if (res.statusCode == 200) {
-        final data = jsonDecode(utf8.decode(res.bodyBytes));
-        if (data is Map && data['success'] == true && data['direct_url'] != null) {
-          return DualExtractionResult.successful(
-            directUrl: data['direct_url'].toString(),
-            title: data['title']?.toString() ?? 'HyperPulse_Media',
-            format: data['format']?.toString() ?? 'mp4',
-            size: data['size'] is num ? (data['size'] as num).toInt() : 0,
-            providerUsed: data['provider']?.toString() ?? 'محرك HyperPulse السحابي المدمج ⚡',
-          );
+    for (final uri in candidateUris) {
+      try {
+        final res = await client.get(
+          uri,
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'HyperPulse-Dart-Engine/4.0',
+          },
+        ).timeout(const Duration(seconds: 8));
+
+        if (res.statusCode == 200) {
+          final data = jsonDecode(utf8.decode(res.bodyBytes));
+          if (data is Map && data['success'] == true && data['direct_url'] != null) {
+            client.close();
+            return DualExtractionResult.successful(
+              directUrl: data['direct_url'].toString(),
+              title: data['title']?.toString() ?? 'HyperPulse_Media',
+              format: data['format']?.toString() ?? 'mp4',
+              size: data['size'] is num ? (data['size'] as num).toInt() : 0,
+              providerUsed: data['provider']?.toString() ?? 'محرك HyperPulse السحابي المدمج ⚡',
+            );
+          }
         }
-      }
-      return null;
-    } catch (_) {
-      return null;
-    } finally {
-      client.close();
+      } catch (_) {}
     }
+    client.close();
+    return null;
   }
 
   /// 2. Direct SaveTube Engine (YouTube)
@@ -330,21 +336,35 @@ class DualCloudExtractor {
 
     final client = http.Client();
     try {
-      final uri = Uri.parse('https://www.tikwm.com/api/').replace(queryParameters: {
-        'url': videoUrl,
-        'hd': '1',
-      });
+      final apiUrl = Uri.parse('https://www.tikwm.com/api/');
+      
+      // Attempt 1: POST
+      http.Response? res;
+      try {
+        res = await client.post(
+          apiUrl,
+          body: {'url': videoUrl, 'hd': '1'},
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Referer': 'https://www.tikwm.com/',
+          },
+        ).timeout(const Duration(seconds: 8));
+      } catch (_) {}
 
-      final res = await client.get(
-        uri,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-          'Referer': 'https://www.tikwm.com/',
-        },
-      ).timeout(quickTimeout);
+      // Attempt 2: GET fallback
+      if (res == null || res.statusCode != 200) {
+        final getUri = apiUrl.replace(queryParameters: {'url': videoUrl, 'hd': '1'});
+        res = await client.get(
+          getUri,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Referer': 'https://www.tikwm.com/',
+          },
+        ).timeout(const Duration(seconds: 8));
+      }
 
       if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
+        final data = jsonDecode(utf8.decode(res.bodyBytes));
         if (data is Map && data['code'] == 0 && data['data'] is Map) {
           final d = data['data'] as Map;
           var playUrl = d['play']?.toString() ?? d['hdplay']?.toString();

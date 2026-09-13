@@ -59,7 +59,7 @@ class MultiServerExtractionResult {
 /// 5. Backup 4: https://cobalt.hyonsu.com/api/json
 class MultiServerExtractor {
   /// Default or custom Wispbyte server URL (can be updated dynamically at runtime)
-  static String wispbyteServerUrl = 'https://pulsesphere-wispbyte.example.com';
+  static String wispbyteServerUrl = 'http://78.154.103.45:9864';
 
   /// Updates the Wispbyte server URL dynamically
   static void setWispbyteServerUrl(String url) {
