@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'smart_url_filter.dart';
+import 'headless_media_sniffer.dart';
 
 /// [CloudExtractedMedia] holds extracted direct stream information
 class CloudExtractedMedia {
@@ -404,7 +405,21 @@ class CloudExtractorService {
     }
 
     // =========================================================================
-    // 4. ALL EXTRACTION ENGINES EXHAUSTED
+    // 4. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
+    // =========================================================================
+    try {
+      debugPrint('[CloudExtractorService] 🕵️ Trying Headless Media Sniffer (VidMate Engine)...');
+      final sniffedResult = await HeadlessMediaSniffer.sniffMediaUrl(cleanUrl);
+      if (sniffedResult != null && sniffedResult.success) {
+        debugPrint('✅ [CloudExtractorService] Sniffer successfully captured stream: ${sniffedResult.directStreamUrl}');
+        return sniffedResult;
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] Sniffer notice: $e');
+    }
+
+    // =========================================================================
+    // 5. ALL EXTRACTION ENGINES EXHAUSTED
     // =========================================================================
     const finalErrorMessage = 'تعذر استخراج الرابط المباشر من السيرفرات السحابية. يرجى استخدام المتصفح المدمج 🌐 لتشغيله وتحميله.';
     debugPrint('❌ $finalErrorMessage');

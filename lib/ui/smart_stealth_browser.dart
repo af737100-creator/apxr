@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -61,6 +62,8 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
   String _currentUrl = '';
   String? _lastDownloadedUrl;
   DateTime? _lastDownloadTime;
+  String? _detectedMediaStreamUrl;
+  String? _detectedMediaTitle;
 
   final List<Map<String, String>> _quickBookmarks = [
     {'name': 'MediaFire', 'url': 'https://www.mediafire.com', 'icon': '🔥'},
@@ -103,6 +106,34 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           }
         },
       )
+      ..addJavaScriptChannel(
+        'HyperPulseMediaSniffer',
+        onMessageReceived: (JavaScriptMessage message) {
+          try {
+            final raw = message.message.trim();
+            if (raw.startsWith('{')) {
+              final Map<String, dynamic> data = jsonDecode(raw);
+              final streamUrl = data['url']?.toString();
+              if (streamUrl != null && streamUrl.startsWith('http')) {
+                if (mounted) {
+                  setState(() {
+                    _detectedMediaStreamUrl = streamUrl;
+                    if (data['title'] != null && data['title'].toString().trim().isNotEmpty) {
+                      _detectedMediaTitle = data['title'].toString().trim();
+                    }
+                  });
+                }
+              }
+            } else if (raw.startsWith('http')) {
+              if (mounted) {
+                setState(() {
+                  _detectedMediaStreamUrl = raw;
+                });
+              }
+            }
+          } catch (_) {}
+        },
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) {
@@ -119,6 +150,8 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                 _currentUrl = url;
                 _urlBarController.text = url;
                 _isLoading = true;
+                _detectedMediaStreamUrl = null;
+                _detectedMediaTitle = null;
               });
             }
           },
@@ -240,6 +273,85 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
         }
 
         setTimeout(checkAutoDownloadLink, 1500);
+
+        // VidMate Media Stream Interception Hooks
+        function reportMedia(url, type) {
+          if (!url || typeof url !== 'string') return;
+          if (!url.startsWith('http://') && !url.startsWith('https://')) return;
+          if (url.includes('googleads') || url.includes('analytics') || url.includes('doubleclick')) return;
+
+          var lower = url.toLowerCase();
+          var isMedia = lower.includes('.mp4') ||
+                        lower.includes('.m3u8') ||
+                        lower.includes('.mpd') ||
+                        lower.includes('.webm') ||
+                        lower.includes('tiktokcdn') ||
+                        lower.includes('fbcdn.net') ||
+                        lower.includes('cdninstagram.com') ||
+                        lower.includes('twimg.com/video') ||
+                        lower.includes('v.redd.it') ||
+                        lower.includes('googlevideo.com/videoplayback');
+
+          if (isMedia && window.HyperPulseMediaSniffer) {
+            window.HyperPulseMediaSniffer.postMessage(JSON.stringify({
+              url: url,
+              title: document.title || 'Video',
+              type: type || 'stream'
+            }));
+          }
+        }
+
+        try {
+          var origPlay = HTMLMediaElement.prototype.play;
+          HTMLMediaElement.prototype.play = function() {
+            if (this.currentSrc) reportMedia(this.currentSrc, 'play');
+            else if (this.src) reportMedia(this.src, 'play');
+            return origPlay.apply(this, arguments);
+          };
+        } catch(e) {}
+
+        try {
+          if (window.fetch) {
+            var origFetch = window.fetch;
+            window.fetch = function() {
+              try {
+                var input = arguments[0];
+                var u = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+                if (u) reportMedia(u, 'fetch');
+              } catch(e) {}
+              return origFetch.apply(this, arguments);
+            };
+          }
+        } catch(e) {}
+
+        try {
+          if (window.XMLHttpRequest) {
+            var origOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url) {
+              try {
+                if (url) reportMedia(url, 'xhr');
+              } catch(e) {}
+              return origOpen.apply(this, arguments);
+            };
+          }
+        } catch(e) {}
+
+        function scanPageMedia() {
+          var vids = document.querySelectorAll('video, audio, source');
+          for (var i = 0; i < vids.length; i++) {
+            var s = vids[i].currentSrc || vids[i].src;
+            if (s) reportMedia(s, 'dom');
+          }
+          var metas = document.querySelectorAll('meta[property*="video"], meta[name*="video"], meta[property*="secure_url"]');
+          for (var j = 0; j < metas.length; j++) {
+            var content = metas[j].getAttribute('content');
+            if (content) reportMedia(content, 'meta');
+          }
+        }
+
+        scanPageMedia();
+        setTimeout(scanPageMedia, 1200);
+        setTimeout(scanPageMedia, 2500);
       })();
     ''';
     _webViewController.runJavaScript(script).catchError((_) {});
@@ -513,7 +625,11 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
               child: WebViewWidget(controller: _webViewController),
             ),
 
-            // 5. Bottom Navigation Bar
+            // 5. Detected Video Floating Banner (VidMate Architecture)
+            if (_detectedMediaStreamUrl != null)
+              _buildDetectedMediaBanner(),
+
+            // 6. Bottom Navigation Bar
             _buildBottomNavControls(),
           ],
         ),
@@ -746,6 +862,95 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                 side: BorderSide(color: fieryAmber.withOpacity(0.3)),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetectedMediaBanner() {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            fieryAmber.withOpacity(0.92),
+            const Color(0xFFD9381E).withOpacity(0.96),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: fieryAmber.withOpacity(0.4),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.play_circle_fill, color: Colors.white, size: 24),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'تم التقاط فيديو مباشر ⚡ (VidMate Sniffer)',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  _detectedMediaTitle ?? _currentTitle,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.9),
+                    fontSize: 10,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            icon: const Icon(Icons.download, size: 14, color: fieryAmber),
+            label: const Text(
+              'تحميل',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            onPressed: () {
+              final streamUrl = _detectedMediaStreamUrl;
+              if (streamUrl != null) {
+                _startDownloadDirectly(streamUrl, customTitle: _detectedMediaTitle);
+              }
+            },
+          ),
+          const SizedBox(width: 4),
+          IconButton(
+            icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            onPressed: () {
+              setState(() {
+                _detectedMediaStreamUrl = null;
+              });
+            },
           ),
         ],
       ),
