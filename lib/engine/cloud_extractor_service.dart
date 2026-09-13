@@ -437,4 +437,44 @@ class CloudExtractorService {
     } catch (_) {}
     return null;
   }
+
+  /// Real-time YouTube title resolution via official YouTube oEmbed API with fallbacks
+  static Future<String?> fetchYouTubeRealTitle(String rawUrl) async {
+    try {
+      final cleanUrl = SmartUrlFilter.extractRealTargetUrl(rawUrl.trim());
+      final oembedUri = Uri.parse('https://www.youtube.com/oembed').replace(
+        queryParameters: {
+          'url': cleanUrl,
+          'format': 'json',
+        },
+      );
+
+      final dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 4),
+          receiveTimeout: const Duration(seconds: 4),
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          },
+        ),
+      );
+
+      final response = await dio.get(oembedUri.toString());
+      if (response.statusCode == 200 && response.data != null) {
+        final dynamic rawData = response.data;
+        final Map<String, dynamic> data = rawData is Map<String, dynamic>
+            ? rawData
+            : (rawData is String ? jsonDecode(rawData) : {});
+        final title = data['title']?.toString();
+        if (title != null && title.trim().isNotEmpty) {
+          final sanitized = title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+          debugPrint('✅ [CloudExtractorService] استرجاع عنوان يوتيوب الأصلي: $sanitized');
+          return sanitized;
+        }
+      }
+    } catch (e) {
+      debugPrint('[CloudExtractorService] تنبيه استرجاع عنوان يوتيوب: $e');
+    }
+    return null;
+  }
 }
