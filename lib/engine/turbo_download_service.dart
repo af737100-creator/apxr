@@ -19,6 +19,7 @@ import 'dual_network_flight_mode.dart';
 import 'android_system_bridge.dart';
 import 'universal_app_store_resolver.dart';
 import 'watermark_service.dart';
+import 'innertube_extractor.dart';
 import 'package:path/path.dart' as p;
 
 /// Event dispatched to listeners with real-time download telemetry.
@@ -476,6 +477,30 @@ class TurboDownloadService {
   }) async {
     task.status = DownloadStatus.downloading;
     task.threadCount = 4;
+
+    // 0. Priority 1: Instant Native Innertube Protocol (Android VR Oculus Quest / iOS profile)
+    try {
+      debugPrint('[TurboDownloadService] ⚡ بدء استخراج يوتيوب فائق السرعة عبر بروتوكول Innertube API...');
+      final innertube = InnertubeExtractor();
+      final innerRes = await innertube.extract(videoId);
+      if (innerRes.success && innerRes.hasStreams) {
+        final best = innerRes.bestProgressive ?? innerRes.bestVideoOnly;
+        if (best != null && best.url.isNotEmpty) {
+          debugPrint('[TurboDownloadService] 🏆 نجح Innertube في ${innerRes.elapsed.inMilliseconds}ms برابط مباشر!');
+          task.sourceUrl = best.url;
+          if (best.contentLength != null && best.contentLength! > 0) {
+            task.totalSizeBytes = best.contentLength!;
+          }
+          await downloadSingleStream(
+            task: task,
+            ramBufferThresholdMb: ramBufferThresholdMb,
+          );
+          return;
+        }
+      }
+    } catch (innerErr) {
+      debugPrint('[TurboDownloadService] ⚠️ تنبيه Innertube: $innerErr - الانتقال للاحتياطي');
+    }
 
     final yt = YoutubeExplode();
     StreamInfo? targetStreamInfo;

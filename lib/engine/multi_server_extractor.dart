@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'package:flutter/foundation.dart';
+import 'parallel_racing_extractor.dart';
 
 /// Representation of an extraction server configuration
 class ExtractionServerConfig {
@@ -132,8 +133,28 @@ class MultiServerExtractor {
       return MultiServerExtractionResult.failed('رابط الفيديو فارغ');
     }
 
+    debugPrint('[MultiServerExtractor] ⚡ بدء سباق السيرفرات المتزامن (Parallel Racing) للرابط: $cleanUrl');
+
+    // 0. Primary Superfast Race across all clean Cloud Run, Cobalt, and specialized endpoints
+    try {
+      final raceResult = await ParallelRacingExtractor.race(cleanUrl);
+      if (raceResult.success && raceResult.directUrl != null && raceResult.directUrl!.isNotEmpty) {
+        debugPrint('[MultiServerExtractor] 🏆 فاز في سباق السيرفرات المتزامن: ${raceResult.serverUsed} في ${raceResult.elapsed.inMilliseconds}ms');
+        return MultiServerExtractionResult(
+          success: true,
+          directUrl: raceResult.directUrl,
+          title: raceResult.title,
+          format: raceResult.format ?? 'mp4',
+          size: raceResult.size,
+          thumbnailUrl: raceResult.thumbnail,
+          serverUsed: raceResult.serverUsed,
+        );
+      }
+    } catch (e) {
+      debugPrint('[MultiServerExtractor] ⚠️ تعذر إتمام السباق السريع: $e');
+    }
+
     final servers = getServers(customWispbyteUrl: customWispbyteUrl);
-    debugPrint('[MultiServerExtractor] 🚀 بدء نظام الاستخراج المتوازي فائق السرعة (Parallel Racing) للرابط: $cleanUrl');
 
     // 1. Parallel Racing across primary Cloud Run servers
     final cloudServers = servers.where((s) => s.type == 'wispbyte').toList();

@@ -14,6 +14,8 @@ import '../engine/android_system_bridge.dart';
 import '../engine/audio_extractor_service.dart';
 import '../engine/smart_resume_manager.dart';
 import '../engine/watermark_service.dart';
+import '../engine/innertube_extractor.dart';
+import '../engine/parallel_racing_extractor.dart';
 
 /// [DownloadManagerService] is the central task manager orchestrating:
 /// 1. Active Downloads Queue with Pause, Resume, Cancel.
@@ -367,20 +369,38 @@ class DownloadManagerService extends ChangeNotifier {
     bool isApk = cleanUrl.toLowerCase().contains('.apk') || inferredName.toLowerCase().endsWith('.apk');
 
     if (isYouTube) {
-      // Direct YouTube stream handling with authentic video title resolution
-      final ytId = CloudExtractorService.extractYouTubeVideoId(cleanUrl);
-      if (preferredTitle == null || preferredTitle.isEmpty || preferredTitle.startsWith('YouTube_')) {
-        final realTitle = await CloudExtractorService.fetchYouTubeRealTitle(cleanUrl);
-        if (realTitle != null && realTitle.isNotEmpty) {
-          inferredName = '$realTitle.mp4';
-        } else {
-          inferredName = 'YouTube_${ytId ?? DateTime.now().millisecondsSinceEpoch}.mp4';
+      // Direct YouTube stream handling with instant Innertube title resolution
+      final ytId = extractYouTubeVideoId(cleanUrl) ?? CloudExtractorService.extractYouTubeVideoId(cleanUrl);
+      
+      // Try ultra-fast Innertube extraction to resolve direct title and stream
+      if (ytId != null) {
+        try {
+          final innertube = InnertubeExtractor();
+          final innerRes = await innertube.extract(ytId);
+          if (innerRes.success && innerRes.title.isNotEmpty) {
+            inferredName = '${innerRes.title}.mp4';
+            final best = innerRes.bestProgressive ?? innerRes.bestVideoOnly;
+            if (best != null && best.url.isNotEmpty) {
+              directUrl = best.url;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (directUrl.isEmpty) {
+        if (preferredTitle == null || preferredTitle.isEmpty || preferredTitle.startsWith('YouTube_')) {
+          final realTitle = await CloudExtractorService.fetchYouTubeRealTitle(cleanUrl);
+          if (realTitle != null && realTitle.isNotEmpty) {
+            inferredName = '$realTitle.mp4';
+          } else {
+            inferredName = 'YouTube_${ytId ?? DateTime.now().millisecondsSinceEpoch}.mp4';
+          }
+        } else if (!inferredName.toLowerCase().endsWith('.mp4') && !inferredName.toLowerCase().endsWith('.mkv')) {
+          inferredName = '$inferredName.mp4';
         }
-      } else if (!inferredName.toLowerCase().endsWith('.mp4') && !inferredName.toLowerCase().endsWith('.mkv')) {
-        inferredName = '$inferredName.mp4';
+        directUrl = cleanUrl;
       }
       isVideo = true;
-      directUrl = cleanUrl;
     } else if (isSocial) {
       final cloudRes = await _cloudExtractor.extractDirectMedia(cleanUrl);
       if (cloudRes.success) {
