@@ -40,11 +40,11 @@ class ParallelRacingExtractor {
     'https://co.wuk.sh',
   ];
 
-  /// Maximum timeout per individual server
-  static const Duration _serverTimeout = Duration(seconds: 3);
+  /// Maximum timeout per individual server (1.5 seconds for instant racing)
+  static const Duration _serverTimeout = Duration(milliseconds: 1500);
 
   /// Global race timeout
-  static const Duration _totalTimeout = Duration(seconds: 8);
+  static const Duration _totalTimeout = Duration(seconds: 4);
 
   /// Main entry point for parallel server racing
   static Future<RacingResult> race(String targetUrl) async {

@@ -25,6 +25,7 @@ class DownloadTask {
   double speedBytesPerSecond;
   int threadCount;
   final List<SegmentChunk> segments;
+  List<String> alternativeUrls;
   String? error;
   DateTime createdAt;
   DateTime? finishedAt;
@@ -40,10 +41,12 @@ class DownloadTask {
     this.speedBytesPerSecond = 0.0,
     this.threadCount = 4,
     List<SegmentChunk>? segments,
+    List<String>? alternativeUrls,
     this.error,
     DateTime? createdAt,
     this.finishedAt,
   })  : segments = segments ?? [],
+        alternativeUrls = alternativeUrls ?? [],
         createdAt = createdAt ?? DateTime.now();
 
   String get fullFilePath => '$destinationDirectory/$fileName';

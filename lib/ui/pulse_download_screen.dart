@@ -394,6 +394,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           message: 'تم وضع الرابط في حقل الإدخال',
           isSuccess: true,
         );
+        _prefetchExtraction(text);
       } else {
         _showCustomToast(
           title: 'الحافظة فارغة',
@@ -404,6 +405,27 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     } catch (e) {
       debugPrint('[PulseDownloadScreen] Paste error: $e');
     }
+  }
+
+  /// ⚡ Step 2: Instant Background Pre-Extraction when URL is pasted or entered
+  void _prefetchExtraction(String rawUrl) {
+    final clean = SmartUrlFilter.extractRealTargetUrl(rawUrl.trim());
+    if (!clean.startsWith('http')) return;
+    if (UrlCache.get(clean) != null) return;
+
+    debugPrint('[PulseDownloadScreen] 🚀 بدء الاستخراج المسبق في الخلفية (Pre-Extraction): $clean');
+    Future(() async {
+      try {
+        if (TurboDownloadService.isSocialMediaStreamUrl(clean)) {
+          final res = await _cloudExtractor.extractDirectMedia(clean);
+          if (res.success && res.directStreamUrl.isNotEmpty) {
+            debugPrint('[PulseDownloadScreen] ✅ تم الاستخراج المسبق بنجاح وحفظه في الذاكرة المؤقتة (0.01s جاهز)!');
+          }
+        }
+      } catch (e) {
+        debugPrint('[PulseDownloadScreen] تنبيه الاستخراج المسبق: $e');
+      }
+    });
   }
 
   Future<void> _initiateTurboDownload({String? overrideUrl}) async {
@@ -1570,6 +1592,12 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                   child: TextField(
                     controller: _urlInputController,
                     enabled: !_isDownloading,
+                    onChanged: (val) {
+                      if (val.length > 12 && val.startsWith('http')) {
+                        _prefetchExtraction(val);
+                      }
+                      setState(() {});
+                    },
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13,

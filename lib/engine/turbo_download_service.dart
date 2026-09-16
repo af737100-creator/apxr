@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../models/device_metrics.dart';
@@ -66,6 +67,13 @@ class TurboDownloadService {
   final StreamController<TurboProgressEvent> _progressController =
       StreamController<TurboProgressEvent>.broadcast();
 
+  // Shared connection pool for turbo downloads to keep sockets alive across requests
+  static final HttpClient _sharedPool = HttpClient()
+    ..maxConnectionsPerHost = 32
+    ..idleTimeout = const Duration(minutes: 5)
+    ..connectionTimeout = const Duration(seconds: 15)
+    ..autoUncompress = false;
+
   Stream<TurboProgressEvent> get onProgress => _progressController.stream;
   Stream<TurboProgressEvent> get progressStream => _progressController.stream;
 
@@ -89,7 +97,11 @@ class TurboDownloadService {
                 },
               ),
             ),
-        _segmentationEngine = segmentationEngine ?? NeuralSegmentationEngine();
+        _segmentationEngine = segmentationEngine ?? NeuralSegmentationEngine() {
+    _dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () => _sharedPool,
+    );
+  }
 
   /// Identifies if a URL belongs to a social media or dynamic media streaming platform
   static bool isSocialMediaStreamUrl(String url) {
@@ -491,6 +503,29 @@ class TurboDownloadService {
           if (best.contentLength != null && best.contentLength! > 0) {
             task.totalSizeBytes = best.contentLength!;
           }
+
+          // ⚡ Step 1: Multi-Part Parallel Download for YouTube (Innertube)
+          if (task.totalSizeBytes > 1024 * 1024) {
+            debugPrint('[TurboDownloadService] 🚀 يوتيوب Innertube: تفعيل التنزيل متعدد المسارات (6 مسارات متوازية)...');
+            try {
+              await _executeParallelDownload(
+                task: task,
+                deviceMetrics: DeviceMetrics(
+                  totalRamMb: 8192,
+                  availableRamMb: 4096,
+                  logicalCores: 8,
+                  currentNetworkSpeedMbps: 180.0,
+                  latencyMs: 22,
+                ),
+                customThreadCount: 6,
+                ramBufferThresholdMb: ramBufferThresholdMb,
+              );
+              return;
+            } catch (e) {
+              debugPrint('[TurboDownloadService] ⚠️ فشل التنزيل المتوازي لـ Innertube: $e - العودة للمسار المفرد');
+            }
+          }
+
           await downloadSingleStream(
             task: task,
             ramBufferThresholdMb: ramBufferThresholdMb,
@@ -530,6 +565,29 @@ class TurboDownloadService {
         if (cloudRes.estimatedSizeBytes != null && cloudRes.estimatedSizeBytes! > 0) {
           task.totalSizeBytes = cloudRes.estimatedSizeBytes!;
         }
+
+        // ⚡ Step 1: Multi-Part Parallel Download for YouTube (Cloud)
+        if (task.totalSizeBytes > 1024 * 1024) {
+          debugPrint('[TurboDownloadService] 🚀 يوتيوب Cloud: تفعيل التنزيل متعدد الأجزاء (6 مسارات متوازية)...');
+          try {
+            await _executeParallelDownload(
+              task: task,
+              deviceMetrics: DeviceMetrics(
+                totalRamMb: 8192,
+                availableRamMb: 4096,
+                logicalCores: 8,
+                currentNetworkSpeedMbps: 180.0,
+                latencyMs: 22,
+              ),
+              customThreadCount: 6,
+              ramBufferThresholdMb: ramBufferThresholdMb,
+            );
+            return;
+          } catch (e) {
+            debugPrint('[TurboDownloadService] ⚠️ فشل التنزيل المتوازي للسحابي: $e');
+          }
+        }
+
         await downloadSingleStream(
           task: task,
           ramBufferThresholdMb: ramBufferThresholdMb,
@@ -540,8 +598,31 @@ class TurboDownloadService {
     }
 
     try {
-
       task.totalSizeBytes = targetStreamInfo.size.totalBytes;
+      final directCdnUrl = targetStreamInfo.url.toString();
+      task.sourceUrl = directCdnUrl;
+
+      // ⚡ Step 1: Multi-Part Parallel Download for YouTube CDN
+      if (task.totalSizeBytes > 1024 * 1024) {
+        debugPrint('[TurboDownloadService] 🚀 يوتيوب CDN: تفعيل التنزيل متعدد الأجزاء (6 مسارات متوازية)...');
+        try {
+          await _executeParallelDownload(
+            task: task,
+            deviceMetrics: DeviceMetrics(
+              totalRamMb: 8192,
+              availableRamMb: 4096,
+              logicalCores: 8,
+              currentNetworkSpeedMbps: 180.0,
+              latencyMs: 22,
+            ),
+            customThreadCount: 6,
+            ramBufferThresholdMb: ramBufferThresholdMb,
+          );
+          return;
+        } catch (e) {
+          debugPrint('[TurboDownloadService] ⚠️ فشل التنزيل المتوازي لـ YouTube CDN: $e - الانتقال للمسار المفرد');
+        }
+      }
 
       final targetFile = File(task.tempFilePath);
       if (!await targetFile.parent.exists()) {
@@ -846,9 +927,13 @@ class TurboDownloadService {
 
       chunk.status = ChunkStatus.downloading;
 
+      final segmentUrl = (task.alternativeUrls.isNotEmpty)
+          ? task.alternativeUrls[i % task.alternativeUrls.length]
+          : task.sourceUrl;
+
       final initParams = ChunkWorkerInitParams(
         segmentIndex: i,
-        url: task.sourceUrl,
+        url: segmentUrl,
         startByte: chunk.startByte + chunk.downloadedBytes,
         endByte: chunk.endByte,
         mainSendPort: receivePort.sendPort,
