@@ -927,9 +927,9 @@ class TurboDownloadService {
 
       chunk.status = ChunkStatus.downloading;
 
-      final segmentUrl = (task.alternativeUrls.isNotEmpty)
-          ? task.alternativeUrls[i % task.alternativeUrls.length]
-          : task.sourceUrl;
+      // Always use task.sourceUrl for all parallel segments to guarantee byte-level consistency
+      // and prevent file corruption caused by mismatched CDN/proxy encodings.
+      final segmentUrl = task.sourceUrl;
 
       final initParams = ChunkWorkerInitParams(
         segmentIndex: i,

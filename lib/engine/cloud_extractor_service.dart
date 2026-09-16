@@ -617,6 +617,12 @@ class UrlCache {
   static String _normalize(String url) {
     final uri = Uri.tryParse(url.trim());
     if (uri == null) return url.trim();
+    // CRITICAL: For YouTube URLs, we MUST preserve the 'v' query parameter
+    // otherwise all YouTube videos would map to the same cached key!
+    if ((uri.host.contains('youtube.com') || uri.host.contains('youtu.be')) && uri.queryParameters.containsKey('v')) {
+      final v = uri.queryParameters['v'];
+      return '${uri.scheme}://${uri.host}${uri.path}?v=$v';
+    }
     return '${uri.scheme}://${uri.host}${uri.path}';
   }
 }

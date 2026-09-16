@@ -114,6 +114,7 @@ class DownloadTask {
     'speedBytesPerSecond': speedBytesPerSecond,
     'threadCount': threadCount,
     'segments': segments.map((s) => s.toJson()).toList(),
+    'alternativeUrls': alternativeUrls,
     'error': error,
     'createdAt': createdAt.toIso8601String(),
     'finishedAt': finishedAt?.toIso8601String(),
@@ -143,6 +144,9 @@ class DownloadTask {
       speedBytesPerSecond: (json['speedBytesPerSecond'] as num?)?.toDouble() ?? 0.0,
       threadCount: json['threadCount'] as int? ?? 4,
       segments: segs,
+      alternativeUrls: (json['alternativeUrls'] is List)
+          ? (json['alternativeUrls'] as List).map((e) => e.toString()).toList()
+          : null,
       error: json['error'] as String?,
       createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt']) : null,
       finishedAt: json['finishedAt'] != null ? DateTime.tryParse(json['finishedAt']) : null,
