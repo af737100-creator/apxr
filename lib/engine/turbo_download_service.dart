@@ -458,13 +458,17 @@ class TurboDownloadService {
     }
 
     // 3. If the server supports Range requests, launch Multi-Threaded Parallel Rocket Mode!
-    if (supportsRanges && task.totalSizeBytes > 1024 * 1024) {
-      debugPrint('[TurboDownloadService] 🚀 Range supported (${task.totalSizeBytes} bytes). Launching Parallel Turbo Mode!');
+    // TikTok/small files (<3MB) are fastest on a single clean stream without thread overhead.
+    // Files 3MB - 10MB get 3 parallel streams; Files > 10MB get full customThreadCount (6 threads).
+    if (supportsRanges && task.totalSizeBytes >= 3 * 1024 * 1024) {
+      final effectiveThreads = customThreadCount ??
+          (task.totalSizeBytes >= 10 * 1024 * 1024 ? 6 : 3);
+      debugPrint('[TurboDownloadService] 🚀 Range supported (${task.totalSizeBytes} bytes). Launching Parallel Mode with $effectiveThreads threads!');
       try {
         await _executeParallelDownload(
           task: task,
           deviceMetrics: deviceMetrics,
-          customThreadCount: customThreadCount,
+          customThreadCount: effectiveThreads,
           ramBufferThresholdMb: ramBufferThresholdMb,
         );
         return;
@@ -488,6 +492,7 @@ class TurboDownloadService {
     int ramBufferThresholdMb = 64,
   }) async {
     task.status = DownloadStatus.downloading;
+    task.segments.clear(); // ⚡ Clean any stale segments from previous attempts
     task.threadCount = 4;
 
     // 0. Priority 1: Instant Native Innertube Protocol (Android VR Oculus Quest / iOS profile)
@@ -505,8 +510,10 @@ class TurboDownloadService {
           }
 
           // ⚡ Step 1: Multi-Part Parallel Download for YouTube (Innertube)
-          if (task.totalSizeBytes > 1024 * 1024) {
-            debugPrint('[TurboDownloadService] 🚀 يوتيوب Innertube: تفعيل التنزيل متعدد المسارات (6 مسارات متوازية)...');
+          // Threshold >= 5MB to avoid overhead on tiny files, with dynamic threads
+          if (task.totalSizeBytes >= 5 * 1024 * 1024) {
+            final dynamicThreads = task.totalSizeBytes >= 10 * 1024 * 1024 ? 6 : 3;
+            debugPrint('[TurboDownloadService] 🚀 يوتيوب Innertube: تفعيل التنزيل متعدد المسارات ($dynamicThreads مسارات متوازية)...');
             try {
               await _executeParallelDownload(
                 task: task,
@@ -517,7 +524,7 @@ class TurboDownloadService {
                   currentNetworkSpeedMbps: 180.0,
                   latencyMs: 22,
                 ),
-                customThreadCount: 6,
+                customThreadCount: dynamicThreads,
                 ramBufferThresholdMb: ramBufferThresholdMb,
               );
               return;
@@ -567,8 +574,9 @@ class TurboDownloadService {
         }
 
         // ⚡ Step 1: Multi-Part Parallel Download for YouTube (Cloud)
-        if (task.totalSizeBytes > 1024 * 1024) {
-          debugPrint('[TurboDownloadService] 🚀 يوتيوب Cloud: تفعيل التنزيل متعدد الأجزاء (6 مسارات متوازية)...');
+        if (task.totalSizeBytes >= 5 * 1024 * 1024) {
+          final dynamicThreads = task.totalSizeBytes >= 10 * 1024 * 1024 ? 6 : 3;
+          debugPrint('[TurboDownloadService] 🚀 يوتيوب Cloud: تفعيل التنزيل متعدد الأجزاء ($dynamicThreads مسارات متوازية)...');
           try {
             await _executeParallelDownload(
               task: task,
@@ -579,7 +587,7 @@ class TurboDownloadService {
                 currentNetworkSpeedMbps: 180.0,
                 latencyMs: 22,
               ),
-              customThreadCount: 6,
+              customThreadCount: dynamicThreads,
               ramBufferThresholdMb: ramBufferThresholdMb,
             );
             return;
@@ -603,8 +611,9 @@ class TurboDownloadService {
       task.sourceUrl = directCdnUrl;
 
       // ⚡ Step 1: Multi-Part Parallel Download for YouTube CDN
-      if (task.totalSizeBytes > 1024 * 1024) {
-        debugPrint('[TurboDownloadService] 🚀 يوتيوب CDN: تفعيل التنزيل متعدد الأجزاء (6 مسارات متوازية)...');
+      if (task.totalSizeBytes >= 5 * 1024 * 1024) {
+        final dynamicThreads = task.totalSizeBytes >= 10 * 1024 * 1024 ? 6 : 3;
+        debugPrint('[TurboDownloadService] 🚀 يوتيوب CDN: تفعيل التنزيل متعدد الأجزاء ($dynamicThreads مسارات متوازية)...');
         try {
           await _executeParallelDownload(
             task: task,
@@ -615,7 +624,7 @@ class TurboDownloadService {
               currentNetworkSpeedMbps: 180.0,
               latencyMs: 22,
             ),
-            customThreadCount: 6,
+            customThreadCount: dynamicThreads,
             ramBufferThresholdMb: ramBufferThresholdMb,
           );
           return;

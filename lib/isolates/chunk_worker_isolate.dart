@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 
 /// Message sent to initialize a worker isolate.
 class ChunkWorkerInitParams {
@@ -46,6 +48,13 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
   const int maxWorkerRetries = 3;
 
   while (currentOffset <= params.endByte && retryAttempts < maxWorkerRetries) {
+    // Optimized HttpClient configuration for this isolate with socket keep-alive
+    final HttpClient isolateClient = HttpClient()
+      ..maxConnectionsPerHost = 8
+      ..idleTimeout = const Duration(minutes: 2)
+      ..connectionTimeout = const Duration(seconds: 15)
+      ..autoUncompress = false;
+
     final Dio dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 15),
@@ -62,6 +71,10 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
           ...?params.customHeaders,
         },
       ),
+    );
+
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: () => isolateClient,
     );
 
     try {
