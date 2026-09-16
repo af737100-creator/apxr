@@ -49,9 +49,10 @@ void chunkWorkerEntryPoint(ChunkWorkerInitParams params) async {
 
   while (currentOffset <= params.endByte && retryAttempts < maxWorkerRetries) {
     // Optimized HttpClient configuration for this isolate with socket keep-alive
+    // 2 connections per host × 6 isolates = 12 connections total (safe, no socket exhaustion)
     final HttpClient isolateClient = HttpClient()
-      ..maxConnectionsPerHost = 8
-      ..idleTimeout = const Duration(minutes: 2)
+      ..maxConnectionsPerHost = 2
+      ..idleTimeout = const Duration(minutes: 1)
       ..connectionTimeout = const Duration(seconds: 15)
       ..autoUncompress = false;
 
