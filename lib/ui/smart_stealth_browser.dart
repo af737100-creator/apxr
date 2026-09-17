@@ -142,6 +142,22 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
                 _loadingProgress = progress / 100.0;
                 _isLoading = progress < 100;
               });
+              // Early injection when page structure is ready (instant stream interception)
+              if (progress >= 30) {
+                _injectDownloadInterceptorScript();
+              }
+            }
+          },
+          onUrlChange: (UrlChange change) {
+            final newUrl = change.url;
+            if (newUrl != null && newUrl.isNotEmpty && mounted) {
+              setState(() {
+                _currentUrl = newUrl;
+                _urlBarController.text = newUrl;
+                _detectedMediaStreamUrl = null;
+                _detectedMediaTitle = null;
+              });
+              _injectDownloadInterceptorScript();
             }
           },
           onPageStarted: (url) {
@@ -351,6 +367,24 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           }
         } catch(e) {}
 
+        // Global capture-phase listeners for video play events
+        try {
+          window.addEventListener('play', function(e) {
+            var t = e.target;
+            if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) {
+              var s = t.currentSrc || t.src;
+              if (s) reportMedia(s, 'play-event');
+            }
+          }, true);
+          window.addEventListener('playing', function(e) {
+            var t = e.target;
+            if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) {
+              var s = t.currentSrc || t.src;
+              if (s) reportMedia(s, 'playing-event');
+            }
+          }, true);
+        } catch(e) {}
+
         function scanPageMedia() {
           var vids = document.querySelectorAll('video, audio, source');
           for (var i = 0; i < vids.length; i++) {
@@ -364,9 +398,26 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           }
         }
 
+        // MutationObserver to immediately detect dynamically mounted videos (SPA, infinite scroll, Reels, Shorts)
+        try {
+          if (window.MutationObserver) {
+            var observer = new MutationObserver(function() {
+              scanPageMedia();
+            });
+            observer.observe(document.documentElement, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['src', 'currentsrc']
+            });
+          }
+        } catch(e) {}
+
         scanPageMedia();
+        setTimeout(scanPageMedia, 500);
         setTimeout(scanPageMedia, 1200);
         setTimeout(scanPageMedia, 2500);
+        setTimeout(scanPageMedia, 4500);
       })();
     ''';
     _webViewController.runJavaScript(script).catchError((_) {});

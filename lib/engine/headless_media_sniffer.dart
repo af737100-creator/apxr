@@ -226,11 +226,11 @@ class HeadlessMediaSniffer {
                         lower.includes('.m3u8') ||
                         lower.includes('.mpd') ||
                         lower.includes('.webm') ||
-                        (lower.includes('tiktokcdn.com') && (lower.includes('/video/') || lower.includes('/tos/'))) ||
-                        lower.includes('fbcdn.net') ||
-                        lower.includes('cdninstagram.com') ||
-                        lower.includes('twimg.com/video') ||
-                        lower.includes('v.redd.it') ||
+                        (lower.includes('tiktokcdn') && (lower.includes('video') || lower.includes('tos-') || lower.includes('.mp4') || lower.includes('mime_type=video'))) ||
+                        (lower.includes('fbcdn.net') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('bytestart') || lower.includes('.m3u8'))) ||
+                        (lower.includes('cdninstagram.com') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('bytestart') || lower.includes('.m3u8'))) ||
+                        (lower.includes('twimg.com') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('.m3u8'))) ||
+                        (lower.includes('v.redd.it') && (lower.includes('dash') || lower.includes('.mp4') || lower.includes('hls'))) ||
                         lower.includes('googlevideo.com/videoplayback');
 
           if (isMedia && window.HeadlessSnifferBridge) {
@@ -241,6 +241,24 @@ class HeadlessMediaSniffer {
             }));
           }
         }
+
+        // Global capture-phase listeners for video play events
+        try {
+          window.addEventListener('play', function(e) {
+            var t = e.target;
+            if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) {
+              var s = t.currentSrc || t.src;
+              if (s) reportMedia(s, 'play-event');
+            }
+          }, true);
+          window.addEventListener('playing', function(e) {
+            var t = e.target;
+            if (t && (t.tagName === 'VIDEO' || t.tagName === 'AUDIO')) {
+              var s = t.currentSrc || t.src;
+              if (s) reportMedia(s, 'playing-event');
+            }
+          }, true);
+        } catch(e) {}
 
         // Helper to detect tracker / ad domain
         function isTrackerUrl(u) {
