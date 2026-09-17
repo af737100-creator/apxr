@@ -27,10 +27,9 @@ class HeadlessMediaSniffer {
     final completer = Completer<CloudExtractedMedia?>();
     Timer? timeoutTimer;
     Timer? domScanTimer;
-    WebViewController? controller;
+    final WebViewController controller = WebViewController();
 
     try {
-      controller = WebViewController();
       await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
       await controller.setUserAgent(mobileUserAgent);
 
@@ -60,7 +59,7 @@ class HeadlessMediaSniffer {
               timeoutTimer?.cancel();
               domScanTimer?.cancel();
               // Abort active webview immediately to cease all background network activity
-              controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
+              controller.loadRequest(Uri.parse('about:blank')).catchError((_) {});
               completer.complete(
                 CloudExtractedMedia(
                   success: true,
@@ -95,7 +94,7 @@ class HeadlessMediaSniffer {
               if (!completer.isCompleted) {
                 timeoutTimer?.cancel();
                 domScanTimer?.cancel();
-                controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
+                controller.loadRequest(Uri.parse('about:blank')).catchError((_) {});
                 completer.complete(
                   CloudExtractedMedia(
                     success: true,
@@ -115,12 +114,12 @@ class HeadlessMediaSniffer {
             return NavigationDecision.navigate;
           },
           onProgress: (int progress) {
-            if (progress > 25 && !completer.isCompleted && controller != null) {
+            if (progress > 25 && !completer.isCompleted) {
               _injectSnifferScript(controller);
             }
           },
           onPageFinished: (url) async {
-            if (completer.isCompleted || controller == null) return;
+            if (completer.isCompleted) return;
             // Inject VidMate-style deep media interception JavaScript
             _injectSnifferScript(controller);
           },
@@ -129,7 +128,7 @@ class HeadlessMediaSniffer {
 
       // Fast periodic DOM scanner to catch active <video> tags immediately
       domScanTimer = Timer.periodic(const Duration(milliseconds: 350), (timer) async {
-        if (completer.isCompleted || controller == null) {
+        if (completer.isCompleted) {
           timer.cancel();
           return;
         }
@@ -182,7 +181,7 @@ class HeadlessMediaSniffer {
         if (!completer.isCompleted) {
           debugPrint('[HeadlessMediaSniffer] Timeout reached for: $cleanUrl');
           domScanTimer?.cancel();
-          controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
+          controller.loadRequest(Uri.parse('about:blank')).catchError((_) {});
           completer.complete(null);
         }
       });

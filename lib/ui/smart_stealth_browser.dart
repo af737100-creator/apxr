@@ -55,6 +55,7 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
   late final WebViewController _webViewController;
   late final TextEditingController _urlBarController;
   final DownloadManagerService _manager = DownloadManagerService();
+  final CloudExtractorService _cloudExtractor = CloudExtractorService();
 
   bool _isLoading = true;
   double _loadingProgress = 0.0;
