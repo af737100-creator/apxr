@@ -92,6 +92,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   // Speed Waveform Telemetry History (Last 15 sample points for smooth graph)
   final List<double> _speedHistory = List.filled(16, 0.0);
   Timer? _speedSampleTimer;
+  Timer? _prefetchDebounceTimer;
 
   @override
   void initState() {
@@ -247,6 +248,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     _pulseGlowController.dispose();
     _urlInputController.dispose();
     _speedSampleTimer?.cancel();
+    _prefetchDebounceTimer?.cancel();
     _progressSub?.cancel();
     _catcherSub?.cancel();
     _smartCatcher.stopListening();
@@ -410,7 +412,8 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   /// ⚡ Step 2: Instant Background Pre-Extraction when URL is pasted or entered
   void _prefetchExtraction(String rawUrl) {
     final clean = SmartUrlFilter.extractRealTargetUrl(rawUrl.trim());
-    if (!clean.startsWith('http')) return;
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) return;
+    if (clean.length < 15) return;
     if (UrlCache.get(clean) != null) return;
 
     debugPrint('[PulseDownloadScreen] 🚀 بدء الاستخراج المسبق في الخلفية (Pre-Extraction): $clean');
@@ -426,6 +429,18 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         debugPrint('[PulseDownloadScreen] تنبيه الاستخراج المسبق: $e');
       }
     });
+  }
+
+  void _onUrlInputChanged(String val) {
+    _prefetchDebounceTimer?.cancel();
+    setState(() {});
+
+    final trimmed = val.trim();
+    if (trimmed.length > 15 && (trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+      _prefetchDebounceTimer = Timer(const Duration(milliseconds: 800), () {
+        _prefetchExtraction(trimmed);
+      });
+    }
   }
 
   Future<void> _initiateTurboDownload({String? overrideUrl}) async {
@@ -1592,12 +1607,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
                   child: TextField(
                     controller: _urlInputController,
                     enabled: !_isDownloading,
-                    onChanged: (val) {
-                      if (val.length > 12 && val.startsWith('http')) {
-                        _prefetchExtraction(val);
-                      }
-                      setState(() {});
-                    },
+                    onChanged: _onUrlInputChanged,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 13,

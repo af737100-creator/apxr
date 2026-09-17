@@ -151,14 +151,22 @@ class HeadlessMediaSniffer {
         function reportMedia(url, type) {
           if (!url || typeof url !== 'string') return;
           if (!url.startsWith('http://') && !url.startsWith('https://')) return;
-          if (url.includes('googleads') || url.includes('analytics') || url.includes('doubleclick')) return;
 
           var lower = url.toLowerCase();
+          // Filter out images, avatars, icons, analytics and ads
+          if (lower.includes('.jpg') || lower.includes('.jpeg') || lower.includes('.png') ||
+              lower.includes('.webp') || lower.includes('.gif') || lower.includes('.svg') ||
+              lower.includes('avatar') || lower.includes('googleads') || lower.includes('doubleclick') ||
+              lower.includes('analytics') || lower.includes('telemetry') || lower.includes('tiktokv.com') ||
+              lower.includes('ttwstatic') || lower.includes('mcs-sg') || lower.includes('mon-sg')) {
+            return;
+          }
+
           var isMedia = lower.includes('.mp4') ||
                         lower.includes('.m3u8') ||
                         lower.includes('.mpd') ||
                         lower.includes('.webm') ||
-                        lower.includes('tiktokcdn') ||
+                        (lower.includes('tiktokcdn.com') && (lower.includes('/video/') || lower.includes('/tos/'))) ||
                         lower.includes('fbcdn.net') ||
                         lower.includes('cdninstagram.com') ||
                         lower.includes('twimg.com/video') ||
@@ -174,6 +182,27 @@ class HeadlessMediaSniffer {
           }
         }
 
+        // Helper to detect tracker / ad domain
+        function isTrackerUrl(u) {
+          if (!u || typeof u !== 'string') return false;
+          var l = u.toLowerCase();
+          return l.includes('tiktokv.com') ||
+                 l.includes('ttwstatic.com') ||
+                 l.includes('mcs-sg') ||
+                 l.includes('mon-sg') ||
+                 l.includes('doubleclick') ||
+                 l.includes('googleads') ||
+                 l.includes('google-analytics') ||
+                 l.includes('googlesyndication') ||
+                 l.includes('adnxs') ||
+                 l.includes('telemetry') ||
+                 l.includes('app-measurement') ||
+                 l.includes('/telemetry') ||
+                 l.includes('/beacon') ||
+                 l.includes('taboola') ||
+                 l.includes('outbrain');
+        }
+
         // 1. Hook HTMLMediaElement play & src
         try {
           var origPlay = HTMLMediaElement.prototype.play;
@@ -184,7 +213,7 @@ class HeadlessMediaSniffer {
           };
         } catch(e) {}
 
-        // 2. Hook window.fetch
+        // 2. Hook window.fetch & BLOCK tracking / telemetry requests
         try {
           if (window.fetch) {
             var origFetch = window.fetch;
@@ -192,22 +221,41 @@ class HeadlessMediaSniffer {
               try {
                 var input = arguments[0];
                 var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-                if (url) reportMedia(url, 'fetch');
+                if (url) {
+                  if (isTrackerUrl(url)) {
+                    // Instantly resolve empty response so no TCP connection is made
+                    return Promise.resolve(new Response('{}', { status: 200, statusText: 'OK' }));
+                  }
+                  reportMedia(url, 'fetch');
+                }
               } catch(e) {}
               return origFetch.apply(this, arguments);
             };
           }
         } catch(e) {}
 
-        // 3. Hook XMLHttpRequest
+        // 3. Hook XMLHttpRequest & BLOCK tracking / telemetry requests
         try {
           if (window.XMLHttpRequest) {
             var origOpen = XMLHttpRequest.prototype.open;
+            var origSend = XMLHttpRequest.prototype.send;
             XMLHttpRequest.prototype.open = function(method, url) {
               try {
-                if (url) reportMedia(url, 'xhr');
+                if (url) {
+                  if (isTrackerUrl(String(url))) {
+                    this.__isBlockedTracker = true;
+                  }
+                  reportMedia(url, 'xhr');
+                }
               } catch(e) {}
               return origOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function() {
+              if (this.__isBlockedTracker) {
+                // Silently swallow tracker request without sending packets
+                return;
+              }
+              return origSend.apply(this, arguments);
             };
           }
         } catch(e) {}
@@ -227,8 +275,8 @@ class HeadlessMediaSniffer {
         }
 
         scanDOM();
-        setTimeout(scanDOM, 1000);
-        setTimeout(scanDOM, 2500);
+        setTimeout(scanDOM, 800);
+        setTimeout(scanDOM, 2000);
       })();
     ''';
 
@@ -240,8 +288,15 @@ class HeadlessMediaSniffer {
     if (url.isEmpty || !url.startsWith('http')) return false;
     final lower = url.toLowerCase();
 
-    // Ignore tracking/ads
-    if (lower.contains('googleads') || lower.contains('analytics') || lower.contains('doubleclick')) {
+    // Reject images, thumbnails, avatars, tracking and ads
+    if (lower.contains('.jpg') ||
+        lower.contains('.jpeg') ||
+        lower.contains('.png') ||
+        lower.contains('.webp') ||
+        lower.contains('.gif') ||
+        lower.contains('.svg') ||
+        lower.contains('avatar') ||
+        SmartUrlFilter.isAdOrTrackingUrl(url)) {
       return false;
     }
 
@@ -249,7 +304,7 @@ class HeadlessMediaSniffer {
         lower.contains('.m3u8') ||
         lower.contains('.mpd') ||
         lower.contains('.webm') ||
-        lower.contains('tiktokcdn') ||
+        (lower.contains('tiktokcdn.com') && (lower.contains('/video/') || lower.contains('/tos/'))) ||
         lower.contains('fbcdn.net') ||
         lower.contains('cdninstagram.com') ||
         lower.contains('twimg.com/video') ||

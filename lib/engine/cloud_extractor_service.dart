@@ -158,10 +158,10 @@ class CloudExtractorService {
         final isTikTok = lower.contains('tiktok.com');
         final redirectDio = Dio(
           BaseOptions(
-            connectTimeout: const Duration(seconds: 5),
-            receiveTimeout: const Duration(seconds: 5),
-            followRedirects: true,
-            maxRedirects: 10,
+            connectTimeout: const Duration(seconds: 3),
+            receiveTimeout: const Duration(seconds: 3),
+            followRedirects: false, // Don't download entire HTML landing page; grab 301/302 Location header instantly
+            validateStatus: (status) => status != null && status < 400,
             headers: {
               'User-Agent': isTikTok
                   ? 'Mozilla/5.0 (Linux; Android 14; Mobile; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36'
@@ -170,12 +170,18 @@ class CloudExtractorService {
           ),
         );
         final res = await redirectDio.get(cleanUrl);
-        final realUrl = res.realUri.toString();
-        if (realUrl.isNotEmpty && realUrl.startsWith('http')) {
-          debugPrint('✅ [CloudExtractorService] Unshortened $cleanUrl -> $realUrl');
-          return realUrl;
+        final location = res.headers.value('location');
+        if (location != null && location.isNotEmpty && location.startsWith('http')) {
+          debugPrint('✅ [CloudExtractorService] Fast Unshortened (302) $cleanUrl -> $location');
+          return location;
         }
       } catch (e) {
+        if (e is DioException && e.response?.headers.value('location') != null) {
+          final loc = e.response!.headers.value('location')!;
+          if (loc.isNotEmpty && loc.startsWith('http')) {
+            return loc;
+          }
+        }
         debugPrint('[CloudExtractorService] Notice unshortening $cleanUrl: $e');
       }
     }
@@ -183,105 +189,112 @@ class CloudExtractorService {
   }
 
   /// High-reliability TikTok / Douyin direct extractor via TikWM Engine (No Watermark)
-  Future<CloudExtractedMedia?> _extractTikTokViaTikWM(String cleanUrl) async {
-    try {
-      debugPrint('[CloudExtractorService] 🎵 جاري استخراج تيك توك عبر محرك TikWM الفائق...');
+  Future<CloudExtractedMedia?> _extractTikTokViaTikWM(String cleanUrl, {String? originalUrl}) async {
+    final urlsToTry = <String>[cleanUrl];
+    if (originalUrl != null && originalUrl.isNotEmpty && originalUrl != cleanUrl) {
+      urlsToTry.add(originalUrl);
+    }
 
-      Map<String, dynamic>? data;
-
-      // Attempt 1: Standard POST with application/x-www-form-urlencoded (bypasses WAF multipart blocks)
+    for (final targetUrl in urlsToTry) {
       try {
-        final postResponse = await _dio.post(
-          'https://www.tikwm.com/api/',
-          data: {'url': cleanUrl, 'hd': '1'},
-          options: Options(
-            contentType: Headers.formUrlEncodedContentType,
-            sendTimeout: const Duration(seconds: 4),
-            receiveTimeout: const Duration(seconds: 4),
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-              'Referer': 'https://www.tikwm.com/',
-              'Accept': 'application/json, text/javascript, */*; q=0.01',
-            },
-          ),
-        );
-        if (postResponse.statusCode == 200 && postResponse.data != null) {
-          final raw = postResponse.data;
-          data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
-        }
-      } catch (_) {}
+        debugPrint('[CloudExtractorService] 🎵 جاري استخراج تيك توك عبر محرك TikWM الفائق لـ $targetUrl...');
 
-      // Attempt 2: GET fallback if POST returned no data
-      if (data == null || data['code'] != 0) {
+        Map<String, dynamic>? data;
+
+        // Attempt 1: Standard POST with application/x-www-form-urlencoded
         try {
-          final getResponse = await _dio.get(
+          final postResponse = await _dio.post(
             'https://www.tikwm.com/api/',
-            queryParameters: {'url': cleanUrl, 'hd': '1'},
+            data: {'url': targetUrl, 'hd': '1'},
             options: Options(
+              contentType: Headers.formUrlEncodedContentType,
               sendTimeout: const Duration(seconds: 4),
               receiveTimeout: const Duration(seconds: 4),
               headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
                 'Referer': 'https://www.tikwm.com/',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
               },
             ),
           );
-          if (getResponse.statusCode == 200 && getResponse.data != null) {
-            final raw = getResponse.data;
+          if (postResponse.statusCode == 200 && postResponse.data != null) {
+            final raw = postResponse.data;
             data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
           }
         } catch (_) {}
-      }
 
-      // Attempt 3: Direct mirror endpoint fallback (without www)
-      if (data == null || data['code'] != 0) {
-        try {
-          final mirrorResponse = await _dio.get(
-            'https://tikwm.com/api/',
-            queryParameters: {'url': cleanUrl, 'hd': '1'},
-            options: Options(
-              sendTimeout: const Duration(seconds: 4),
-              receiveTimeout: const Duration(seconds: 4),
-            ),
-          );
-          if (mirrorResponse.statusCode == 200 && mirrorResponse.data != null) {
-            final raw = mirrorResponse.data;
-            data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
-          }
-        } catch (_) {}
-      }
-
-      if (data != null && data['code'] == 0 && data['data'] is Map) {
-        final d = data['data'] as Map;
-        var playUrl = (d['play'] ?? d['hdplay'] ?? d['wmplay'] ?? d['music'])?.toString();
-        if (playUrl != null && playUrl.isNotEmpty) {
-          if (playUrl.startsWith('/')) {
-            playUrl = 'https://www.tikwm.com$playUrl';
-          }
-          final title = (d['title']?.toString() ?? 'TikTok_Video_${DateTime.now().millisecondsSinceEpoch}')
-              .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-              .trim();
-          final format = playUrl.contains('.mp3') ? 'mp3' : 'mp4';
-          final thumb = d['cover']?.toString();
-          final size = d['size'] is int ? d['size'] as int : null;
-
-          debugPrint('✅ [TikWM] نجح استخراج تيك توك بدون علامة مائية!');
-          return CloudExtractedMedia(
-            success: true,
-            originalUrl: cleanUrl,
-            directStreamUrl: playUrl,
-            title: CloudExtractedMedia.sanitizeFilename(title, format),
-            format: format,
-            quality: 'TikWM HD (بدون علامة مائية) ⚡',
-            thumbnailUrl: thumb,
-            estimatedSizeBytes: size,
-            serverUsed: 'TikWM Native Engine',
-            isDirectFallback: false,
-          );
+        // Attempt 2: GET fallback if POST returned no data
+        if (data == null || data['code'] != 0) {
+          try {
+            final getResponse = await _dio.get(
+              'https://www.tikwm.com/api/',
+              queryParameters: {'url': targetUrl, 'hd': '1'},
+              options: Options(
+                sendTimeout: const Duration(seconds: 4),
+                receiveTimeout: const Duration(seconds: 4),
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                  'Referer': 'https://www.tikwm.com/',
+                },
+              ),
+            );
+            if (getResponse.statusCode == 200 && getResponse.data != null) {
+              final raw = getResponse.data;
+              data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
+            }
+          } catch (_) {}
         }
+
+        // Attempt 3: Direct mirror endpoint fallback (without www)
+        if (data == null || data['code'] != 0) {
+          try {
+            final mirrorResponse = await _dio.get(
+              'https://tikwm.com/api/',
+              queryParameters: {'url': targetUrl, 'hd': '1'},
+              options: Options(
+                sendTimeout: const Duration(seconds: 4),
+                receiveTimeout: const Duration(seconds: 4),
+              ),
+            );
+            if (mirrorResponse.statusCode == 200 && mirrorResponse.data != null) {
+              final raw = mirrorResponse.data;
+              data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
+            }
+          } catch (_) {}
+        }
+
+        if (data != null && data['code'] == 0 && data['data'] is Map) {
+          final d = data['data'] as Map;
+          var playUrl = (d['play'] ?? d['hdplay'] ?? d['wmplay'] ?? d['music'])?.toString();
+          if (playUrl != null && playUrl.isNotEmpty) {
+            if (playUrl.startsWith('/')) {
+              playUrl = 'https://www.tikwm.com$playUrl';
+            }
+            final title = (d['title']?.toString() ?? 'TikTok_Video_${DateTime.now().millisecondsSinceEpoch}')
+                .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+                .trim();
+            final format = playUrl.contains('.mp3') ? 'mp3' : 'mp4';
+            final thumb = d['cover']?.toString();
+            final size = d['size'] is int ? d['size'] as int : null;
+
+            debugPrint('✅ [TikWM] نجح استخراج تيك توك بدون علامة مائية!');
+            return CloudExtractedMedia(
+              success: true,
+              originalUrl: targetUrl,
+              directStreamUrl: playUrl,
+              title: CloudExtractedMedia.sanitizeFilename(title, format),
+              format: format,
+              quality: 'TikWM HD (بدون علامة مائية) ⚡',
+              thumbnailUrl: thumb,
+              estimatedSizeBytes: size,
+              serverUsed: 'TikWM Native Engine',
+              isDirectFallback: false,
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] تنبيه استخراج تيك توك عبر TikWM: $e');
       }
-    } catch (e) {
-      debugPrint('[CloudExtractorService] تنبيه استخراج تيك توك عبر TikWM: $e');
     }
     return null;
   }
@@ -394,8 +407,8 @@ class CloudExtractorService {
     // =========================================================================
     // 1. TIKTOK SPECIALIZED EXTRACTION (Priority 1 for TikTok / Douyin)
     // =========================================================================
-    if (isTikTokUrl(cleanUrl)) {
-      final tikTokResult = await _extractTikTokViaTikWM(cleanUrl);
+    if (isTikTokUrl(cleanUrl) || isTikTokUrl(rawCleanUrl)) {
+      final tikTokResult = await _extractTikTokViaTikWM(cleanUrl, originalUrl: rawCleanUrl);
       if (tikTokResult != null && tikTokResult.success) {
         return deliver(tikTokResult);
       }
@@ -410,8 +423,8 @@ class CloudExtractorService {
     }
 
     // Secondary TikTok check if not tried earlier
-    if (isTikTokUrl(cleanUrl)) {
-      final ttRetry = await _extractTikTokViaTikWM(cleanUrl);
+    if (isTikTokUrl(cleanUrl) || isTikTokUrl(rawCleanUrl)) {
+      final ttRetry = await _extractTikTokViaTikWM(cleanUrl, originalUrl: rawCleanUrl);
       if (ttRetry != null && ttRetry.success) return deliver(ttRetry);
     }
 
