@@ -491,18 +491,13 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         });
 
         final cloudResult = await _cloudExtractor.extractDirectMedia(cleanUrl);
-        if (cloudResult.success) {
+        if (cloudResult.success && cloudResult.directStreamUrl.isNotEmpty) {
           directStreamUrl = cloudResult.directStreamUrl;
           inferredTitle = cloudResult.title;
           inferredFormat = 'mp4';
-        } else if (CloudExtractorService.isYouTubeUrl(cleanUrl)) {
-          // Native YouTube engine fallback on device
-          directStreamUrl = cleanUrl;
-          final vidId = CloudExtractorService.extractYouTubeVideoId(cleanUrl) ?? 'video_${DateTime.now().millisecondsSinceEpoch}';
-          inferredTitle = 'YouTube_$vidId.mp4';
-          inferredFormat = 'mp4';
         } else {
-          throw Exception(cloudResult.errorMessage ?? 'فشل استخراج الفيديو السحابي');
+          throw Exception(cloudResult.errorMessage ??
+              'تعذر استخراج رابط الفيديو المباشر. يرجى فتح الفيديو في المتصفح المدمج 🌐 لتشغيله وتحميله تلقائياً');
         }
       }
 

@@ -19,13 +19,14 @@ class HeadlessMediaSniffer {
   /// or null if no media stream was detected in time.
   static Future<CloudExtractedMedia?> sniffMediaUrl(
     String targetUrl, {
-    Duration timeout = const Duration(seconds: 7),
+    Duration timeout = const Duration(seconds: 14),
   }) async {
     final cleanUrl = SmartUrlFilter.extractRealTargetUrl(targetUrl.trim());
     if (cleanUrl.isEmpty || !cleanUrl.startsWith('http')) return null;
 
     final completer = Completer<CloudExtractedMedia?>();
     Timer? timeoutTimer;
+    Timer? domScanTimer;
     WebViewController? controller;
 
     try {
@@ -57,6 +58,7 @@ class HeadlessMediaSniffer {
             if (mediaUrl != null && _isValidMediaUrl(mediaUrl)) {
               debugPrint('⚡ [HeadlessMediaSniffer] Intercepted stream: $mediaUrl');
               timeoutTimer?.cancel();
+              domScanTimer?.cancel();
               // Abort active webview immediately to cease all background network activity
               controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
               completer.complete(
@@ -92,6 +94,7 @@ class HeadlessMediaSniffer {
             if (_isValidMediaUrl(navUrl)) {
               if (!completer.isCompleted) {
                 timeoutTimer?.cancel();
+                domScanTimer?.cancel();
                 controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
                 completer.complete(
                   CloudExtractedMedia(
@@ -111,6 +114,11 @@ class HeadlessMediaSniffer {
             }
             return NavigationDecision.navigate;
           },
+          onProgress: (int progress) {
+            if (progress > 25 && !completer.isCompleted && controller != null) {
+              _injectSnifferScript(controller);
+            }
+          },
           onPageFinished: (url) async {
             if (completer.isCompleted || controller == null) return;
             // Inject VidMate-style deep media interception JavaScript
@@ -119,10 +127,61 @@ class HeadlessMediaSniffer {
         ),
       );
 
+      // Fast periodic DOM scanner to catch active <video> tags immediately
+      domScanTimer = Timer.periodic(const Duration(milliseconds: 350), (timer) async {
+        if (completer.isCompleted || controller == null) {
+          timer.cancel();
+          return;
+        }
+        try {
+          final res = await controller.runJavaScriptReturningResult('''
+            (function() {
+              var vids = document.querySelectorAll('video');
+              for (var i = 0; i < vids.length; i++) {
+                var s = vids[i].currentSrc || vids[i].src;
+                if (s && s.startsWith('http') && !s.startsWith('blob:')) return s;
+                var sources = vids[i].querySelectorAll('source');
+                for (var j = 0; j < sources.length; j++) {
+                  var src = sources[j].src;
+                  if (src && src.startsWith('http') && !src.startsWith('blob:')) return src;
+                }
+              }
+              var og = document.querySelector('meta[property="og:video:secure_url"], meta[property="og:video"], meta[name="twitter:player:stream"]');
+              if (og) {
+                var c = og.getAttribute('content');
+                if (c && c.startsWith('http')) return c;
+              }
+              return null;
+            })()
+          ''');
+          final found = res.toString().replaceAll('"', '').trim();
+          if (found.isNotEmpty && found != 'null' && found.startsWith('http') && _isValidMediaUrl(found)) {
+            if (!completer.isCompleted) {
+              timer.cancel();
+              timeoutTimer?.cancel();
+              controller.loadRequest(Uri.parse('about:blank')).catchError((_) {});
+              completer.complete(
+                CloudExtractedMedia(
+                  success: true,
+                  originalUrl: cleanUrl,
+                  directStreamUrl: found,
+                  title: CloudExtractedMedia.sanitizeFilename('Video_${DateTime.now().millisecondsSinceEpoch}', 'mp4'),
+                  format: 'mp4',
+                  quality: 'Headless DOM Scan ⚡',
+                  serverUsed: 'Local Headless Engine',
+                  isDirectFallback: false,
+                ),
+              );
+            }
+          }
+        } catch (_) {}
+      });
+
       // Set safety timeout so the process never hangs indefinitely
       timeoutTimer = Timer(timeout, () {
         if (!completer.isCompleted) {
           debugPrint('[HeadlessMediaSniffer] Timeout reached for: $cleanUrl');
+          domScanTimer?.cancel();
           controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
           completer.complete(null);
         }
@@ -134,6 +193,7 @@ class HeadlessMediaSniffer {
     } catch (e) {
       debugPrint('[HeadlessMediaSniffer] Headless sniffer unsupported or error: $e');
       timeoutTimer?.cancel();
+      domScanTimer?.cancel();
       if (!completer.isCompleted) {
         completer.complete(null);
       }
@@ -288,13 +348,18 @@ class HeadlessMediaSniffer {
     if (url.isEmpty || !url.startsWith('http')) return false;
     final lower = url.toLowerCase();
 
-    // Reject images, thumbnails, avatars, tracking and ads
+    // Reject images, thumbnails, avatars, tracking, fonts, stylesheets, and scripts
     if (lower.contains('.jpg') ||
         lower.contains('.jpeg') ||
         lower.contains('.png') ||
         lower.contains('.webp') ||
         lower.contains('.gif') ||
         lower.contains('.svg') ||
+        lower.contains('.ico') ||
+        lower.contains('.css') ||
+        lower.contains('.js') ||
+        lower.contains('.woff') ||
+        lower.contains('.ttf') ||
         lower.contains('avatar') ||
         SmartUrlFilter.isAdOrTrackingUrl(url)) {
       return false;
@@ -304,11 +369,11 @@ class HeadlessMediaSniffer {
         lower.contains('.m3u8') ||
         lower.contains('.mpd') ||
         lower.contains('.webm') ||
-        (lower.contains('tiktokcdn.com') && (lower.contains('/video/') || lower.contains('/tos/'))) ||
-        lower.contains('fbcdn.net') ||
-        lower.contains('cdninstagram.com') ||
-        lower.contains('twimg.com/video') ||
-        lower.contains('v.redd.it') ||
+        (lower.contains('tiktokcdn') && (lower.contains('video') || lower.contains('tos-') || lower.contains('.mp4') || lower.contains('mime_type=video'))) ||
+        (lower.contains('fbcdn.net') && (lower.contains('video') || lower.contains('.mp4') || lower.contains('bytestart') || lower.contains('.m3u8'))) ||
+        (lower.contains('cdninstagram.com') && (lower.contains('video') || lower.contains('.mp4') || lower.contains('bytestart') || lower.contains('.m3u8'))) ||
+        (lower.contains('twimg.com') && (lower.contains('video') || lower.contains('.mp4') || lower.contains('.m3u8'))) ||
+        (lower.contains('v.redd.it') && (lower.contains('dash') || lower.contains('.mp4') || lower.contains('hls'))) ||
         lower.contains('googlevideo.com/videoplayback');
   }
 }

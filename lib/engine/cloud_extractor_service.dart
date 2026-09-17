@@ -93,11 +93,7 @@ class CloudExtractorService {
 
   // Server List Configuration
   static const String defaultWispbyteEndpoint = '';
-  static const List<String> cobaltBackupServers = [
-    'https://api.cobalt.tools/api/json',
-    'https://co.wuk.sh/api/json',
-    'https://cobalt.stream/api/json',
-  ];
+  static const List<String> cobaltBackupServers = [];
 
   // Shared HttpClient connection pool for keep-alive sockets
   static final HttpClient _sharedHttpClient = HttpClient()
@@ -132,8 +128,9 @@ class CloudExtractorService {
   List<String> get _candidateServerEndpoints {
     final list = <String>[];
 
-    // 1. Primary Live Cloud Run Server (Active Dev Environment)
+    // 1. Primary Live Cloud Run Server
     list.add('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
+    list.add('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
 
     if (primaryWispbyteUrl.isNotEmpty && primaryWispbyteUrl != defaultWispbyteEndpoint) {
       list.add(primaryWispbyteUrl);
@@ -412,6 +409,14 @@ class CloudExtractorService {
       if (tikTokResult != null && tikTokResult.success) {
         return deliver(tikTokResult);
       }
+      // Immediate Headless Sniffer for TikTok if API fails or is rate-limited
+      try {
+        debugPrint('[CloudExtractorService] 🕵️ TikTok API blocked/failed, triggering Headless Media Sniffer...');
+        final sniffedResult = await HeadlessMediaSniffer.sniffMediaUrl(cleanUrl);
+        if (sniffedResult != null && sniffedResult.success) {
+          return deliver(sniffedResult);
+        }
+      } catch (_) {}
     }
 
     // =========================================================================
@@ -422,76 +427,8 @@ class CloudExtractorService {
       return deliver(backendResult);
     }
 
-    // Secondary TikTok check if not tried earlier
-    if (isTikTokUrl(cleanUrl) || isTikTokUrl(rawCleanUrl)) {
-      final ttRetry = await _extractTikTokViaTikWM(cleanUrl, originalUrl: rawCleanUrl);
-      if (ttRetry != null && ttRetry.success) return deliver(ttRetry);
-    }
-
     // =========================================================================
-    // 3. BACKUP COBALT SERVERS FAILOVER (Backup 2, 3, 4 - Timeout 8s each)
-    // =========================================================================
-    for (int i = 0; i < cobaltBackupServers.length; i++) {
-      final cobaltEndpoint = cobaltBackupServers[i];
-      final serverIndex = i + 2;
-
-      try {
-        final response = await _dio.post(
-          cobaltEndpoint,
-          data: {
-            'url': cleanUrl,
-            'vQuality': '1080',
-            'filenamePattern': 'classic',
-          },
-          options: Options(
-            sendTimeout: const Duration(seconds: 3),
-            receiveTimeout: const Duration(seconds: 3),
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-            },
-          ),
-        );
-
-        if (response.statusCode == 200 && response.data != null) {
-          final dynamic rawData = response.data;
-          final Map<String, dynamic> data = rawData is Map<String, dynamic>
-              ? rawData
-              : (rawData is String ? jsonDecode(rawData) : {});
-
-          String? directUrl;
-          if (data['url'] != null && data['url'].toString().isNotEmpty) {
-            directUrl = data['url'].toString();
-          } else if (data['picker'] is List && (data['picker'] as List).isNotEmpty) {
-            final firstItem = (data['picker'] as List).first;
-            if (firstItem is Map && firstItem['url'] != null) {
-              directUrl = firstItem['url'].toString();
-            }
-          }
-
-          if (directUrl != null && directUrl.isNotEmpty) {
-            debugPrint('✅ Cobalt ($cobaltEndpoint): نجح الاستخراج');
-
-            final title = data['filename']?.toString() ?? 'Video_${DateTime.now().millisecondsSinceEpoch}';
-            final format = 'mp4';
-
-            return deliver(CloudExtractedMedia(
-              success: true,
-              originalUrl: cleanUrl,
-              directStreamUrl: directUrl,
-              title: CloudExtractedMedia.sanitizeFilename(title, format),
-              format: format,
-              quality: 'Cobalt Failover Backup #$serverIndex',
-              serverUsed: cobaltEndpoint,
-              isDirectFallback: false,
-            ));
-          }
-        }
-      } catch (_) {}
-    }
-
-    // =========================================================================
-    // 4. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
+    // 3. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
     // =========================================================================
     try {
       debugPrint('[CloudExtractorService] 🕵️ Trying Headless Media Sniffer (VidMate Engine)...');

@@ -287,15 +287,24 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           if (url.includes('googleads') || url.includes('analytics') || url.includes('doubleclick')) return;
 
           var lower = url.toLowerCase();
+
+          // Reject static image assets, scripts, stylesheets, and icons
+          if (lower.includes('.jpg') || lower.includes('.jpeg') || lower.includes('.png') ||
+              lower.includes('.webp') || lower.includes('.gif') || lower.includes('.svg') ||
+              lower.includes('.ico') || lower.includes('.css') || lower.includes('.js') ||
+              lower.includes('.woff') || lower.includes('.ttf') || lower.includes('avatar')) {
+            return;
+          }
+
           var isMedia = lower.includes('.mp4') ||
                         lower.includes('.m3u8') ||
                         lower.includes('.mpd') ||
                         lower.includes('.webm') ||
-                        lower.includes('tiktokcdn') ||
-                        lower.includes('fbcdn.net') ||
-                        lower.includes('cdninstagram.com') ||
-                        lower.includes('twimg.com/video') ||
-                        lower.includes('v.redd.it') ||
+                        (lower.includes('tiktokcdn') && (lower.includes('video') || lower.includes('tos-') || lower.includes('.mp4') || lower.includes('mime_type=video'))) ||
+                        (lower.includes('fbcdn.net') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('bytestart') || lower.includes('.m3u8'))) ||
+                        (lower.includes('cdninstagram.com') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('bytestart') || lower.includes('.m3u8'))) ||
+                        (lower.includes('twimg.com') && (lower.includes('video') || lower.includes('.mp4') || lower.includes('.m3u8'))) ||
+                        (lower.includes('v.redd.it') && (lower.includes('dash') || lower.includes('.mp4') || lower.includes('hls'))) ||
                         lower.includes('googlevideo.com/videoplayback');
 
           if (isMedia && window.HyperPulseMediaSniffer) {
@@ -365,10 +374,71 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
 
   Future<void> _extractAndDownloadFromPage() async {
     HapticFeedback.mediumImpact();
-    // 1. If current page is a social / YouTube URL, let CloudExtractor handle it directly
-    if (CloudExtractorService.isSocialVideoPlatform(_currentUrl)) {
-      _startDownloadDirectly(_currentUrl);
+
+    // 0. If media stream was already sniffed from video playback or network:
+    if (_detectedMediaStreamUrl != null && _detectedMediaStreamUrl!.isNotEmpty) {
+      _startDownloadDirectly(_detectedMediaStreamUrl!, customTitle: _detectedMediaTitle);
       return;
+    }
+
+    // 1. If current page is a social / video platform (Instagram, Facebook, Twitter, TikTok, YouTube, etc.)
+    if (CloudExtractorService.isSocialVideoPlatform(_currentUrl)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⚡ جاري فحص الصفحة واستخراج تيار الفيديو المباشر...'),
+            backgroundColor: Color(0xFF1F1D24),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+
+      // First check active video element or OpenGraph video tags in the DOM
+      try {
+        final domVideoResult = await _webViewController.runJavaScriptReturningResult('''
+          (function() {
+            var vids = document.querySelectorAll('video');
+            for (var i = 0; i < vids.length; i++) {
+              var s = vids[i].currentSrc || vids[i].src;
+              if (s && s.startsWith('http') && !s.startsWith('blob:')) return s;
+              var sources = vids[i].querySelectorAll('source');
+              for (var j = 0; j < sources.length; j++) {
+                var src = sources[j].src;
+                if (src && src.startsWith('http') && !src.startsWith('blob:')) return src;
+              }
+            }
+            var og = document.querySelector('meta[property="og:video:secure_url"], meta[property="og:video"], meta[name="twitter:player:stream"]');
+            if (og) {
+              var c = og.getAttribute('content');
+              if (c && c.startsWith('http')) return c;
+            }
+            return null;
+          })()
+        ''');
+        final domUrl = domVideoResult.toString().replaceAll('"', '').trim();
+        if (domUrl.isNotEmpty && domUrl != 'null' && domUrl.startsWith('http')) {
+          _startDownloadDirectly(domUrl, customTitle: _currentTitle);
+          return;
+        }
+      } catch (_) {}
+
+      // If not directly present in DOM, pass to CloudExtractorService to extract the stream
+      final extracted = await _cloudExtractor.extractDirectMedia(_currentUrl);
+      if (extracted.success && extracted.directStreamUrl.isNotEmpty) {
+        _startDownloadDirectly(extracted.directStreamUrl, customTitle: extracted.title);
+        return;
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('🎬 يرجى الضغط على زر تشغيل الفيديو داخل الصفحة ليتم التقاطه وتحميله فوراً'),
+              backgroundColor: Color(0xFFEAB308),
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
     }
 
     // 2. First attempt: Use UniversalAppStoreResolver directly for store URLs
@@ -483,8 +553,8 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
       debugPrint('[SmartStealthBrowser] DOM sniffing error: $e');
     }
 
-    // Fallback if URL is already a direct file or social media
-    if (SmartUrlFilter.isDownloadableFileUrl(_currentUrl) || CloudExtractorService.isSocialVideoPlatform(_currentUrl)) {
+    // Fallback if URL is already a direct file (APK, ZIP, MP4, etc.)
+    if (SmartUrlFilter.isDownloadableFileUrl(_currentUrl)) {
       _startDownloadDirectly(_currentUrl);
     } else {
       if (mounted) {
