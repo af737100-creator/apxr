@@ -57,6 +57,8 @@ class HeadlessMediaSniffer {
             if (mediaUrl != null && _isValidMediaUrl(mediaUrl)) {
               debugPrint('⚡ [HeadlessMediaSniffer] Intercepted stream: $mediaUrl');
               timeoutTimer?.cancel();
+              // Abort active webview immediately to cease all background network activity
+              controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
               completer.complete(
                 CloudExtractedMedia(
                   success: true,
@@ -80,9 +82,17 @@ class HeadlessMediaSniffer {
         NavigationDelegate(
           onNavigationRequest: (NavigationRequest request) {
             final navUrl = request.url;
+
+            // 1. Block analytics, telemetry, and ad trackers (prevents TCP errors & battery drain)
+            if (SmartUrlFilter.isAdOrTrackingUrl(navUrl)) {
+              return NavigationDecision.prevent;
+            }
+
+            // 2. Intercept direct stream URLs
             if (_isValidMediaUrl(navUrl)) {
               if (!completer.isCompleted) {
                 timeoutTimer?.cancel();
+                controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
                 completer.complete(
                   CloudExtractedMedia(
                     success: true,
@@ -113,6 +123,7 @@ class HeadlessMediaSniffer {
       timeoutTimer = Timer(timeout, () {
         if (!completer.isCompleted) {
           debugPrint('[HeadlessMediaSniffer] Timeout reached for: $cleanUrl');
+          controller?.loadRequest(Uri.parse('about:blank')).catchError((_) {});
           completer.complete(null);
         }
       });

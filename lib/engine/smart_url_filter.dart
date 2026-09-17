@@ -87,6 +87,42 @@ class SmartUrlFilter {
     }
   }
 
+  /// Checks whether a URL is an advertisement, tracking beacon, telemetry host, or background metric tracker.
+  static bool isAdOrTrackingUrl(String rawUrl) {
+    if (rawUrl.isEmpty) return false;
+    final lower = rawUrl.toLowerCase();
+
+    // Aggressive hosts that flood networks with unreachable TCP attempts and battery drain
+    if (lower.contains('tiktokv.com') ||
+        lower.contains('ttwstatic.com') ||
+        lower.contains('mcs-sg') ||
+        lower.contains('mon-sg') ||
+        lower.contains('doubleclick.net') ||
+        lower.contains('googleads') ||
+        lower.contains('google-analytics') ||
+        lower.contains('googlesyndication') ||
+        lower.contains('adnxs.com') ||
+        lower.contains('adservice') ||
+        lower.contains('telemetry') ||
+        lower.contains('app-measurement') ||
+        lower.contains('/telemetry') ||
+        lower.contains('/beacon') ||
+        lower.contains('taboola') ||
+        lower.contains('outbrain')) {
+      return true;
+    }
+
+    try {
+      final uri = Uri.parse(rawUrl);
+      final host = uri.host.toLowerCase();
+      for (final keyword in adAndTrackerKeywords) {
+        if (host.contains(keyword)) return true;
+      }
+    } catch (_) {}
+
+    return false;
+  }
+
   /// Extracts the real download target from cloaked redirect query parameters
   /// e.g. https://domain.com/download?url=https://real-file.com/app.apk
   static String extractRealTargetUrl(String rawUrl) {

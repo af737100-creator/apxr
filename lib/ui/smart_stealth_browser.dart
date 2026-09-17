@@ -173,6 +173,12 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           },
           onNavigationRequest: (request) {
             final targetUrl = request.url;
+
+            // 1. Block aggressive ad networks & telemetry trackers (saves bandwidth & prevents unreachable TCP loops)
+            if (SmartUrlFilter.isAdOrTrackingUrl(targetUrl)) {
+              return NavigationDecision.prevent;
+            }
+
             if (SmartUrlFilter.isDownloadableFileUrl(targetUrl)) {
               _startDownloadDirectly(targetUrl);
               return NavigationDecision.prevent;

@@ -132,9 +132,8 @@ class CloudExtractorService {
   List<String> get _candidateServerEndpoints {
     final list = <String>[];
 
-    // 1. Primary Live Cloud Run Servers
+    // 1. Primary Live Cloud Run Server (Active Dev Environment)
     list.add('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
-    list.add('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
 
     if (primaryWispbyteUrl.isNotEmpty && primaryWispbyteUrl != defaultWispbyteEndpoint) {
       list.add(primaryWispbyteUrl);
@@ -187,46 +186,74 @@ class CloudExtractorService {
   Future<CloudExtractedMedia?> _extractTikTokViaTikWM(String cleanUrl) async {
     try {
       debugPrint('[CloudExtractorService] 🎵 جاري استخراج تيك توك عبر محرك TikWM الفائق...');
-      
-      // Attempt 1: POST request
-      final postResponse = await _dio.post(
-        'https://www.tikwm.com/api/',
-        data: FormData.fromMap({'url': cleanUrl, 'hd': '1'}),
-        options: Options(
-          sendTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Referer': 'https://www.tikwm.com/',
-          },
-        ),
-      );
 
       Map<String, dynamic>? data;
-      if (postResponse.statusCode == 200 && postResponse.data != null) {
-        final raw = postResponse.data;
-        data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
-      }
+
+      // Attempt 1: Standard POST with application/x-www-form-urlencoded (bypasses WAF multipart blocks)
+      try {
+        final postResponse = await _dio.post(
+          'https://www.tikwm.com/api/',
+          data: {'url': cleanUrl, 'hd': '1'},
+          options: Options(
+            contentType: Headers.formUrlEncodedContentType,
+            sendTimeout: const Duration(seconds: 4),
+            receiveTimeout: const Duration(seconds: 4),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Referer': 'https://www.tikwm.com/',
+              'Accept': 'application/json, text/javascript, */*; q=0.01',
+            },
+          ),
+        );
+        if (postResponse.statusCode == 200 && postResponse.data != null) {
+          final raw = postResponse.data;
+          data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
+        }
+      } catch (_) {}
 
       // Attempt 2: GET fallback if POST returned no data
       if (data == null || data['code'] != 0) {
-        final getResponse = await _dio.get(
-          'https://www.tikwm.com/api/',
-          queryParameters: {'url': cleanUrl, 'hd': '1'},
-          options: Options(
-            sendTimeout: const Duration(seconds: 8),
-            receiveTimeout: const Duration(seconds: 8),
-          ),
-        );
-        if (getResponse.statusCode == 200 && getResponse.data != null) {
-          final raw = getResponse.data;
-          data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
-        }
+        try {
+          final getResponse = await _dio.get(
+            'https://www.tikwm.com/api/',
+            queryParameters: {'url': cleanUrl, 'hd': '1'},
+            options: Options(
+              sendTimeout: const Duration(seconds: 4),
+              receiveTimeout: const Duration(seconds: 4),
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Referer': 'https://www.tikwm.com/',
+              },
+            ),
+          );
+          if (getResponse.statusCode == 200 && getResponse.data != null) {
+            final raw = getResponse.data;
+            data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
+          }
+        } catch (_) {}
+      }
+
+      // Attempt 3: Direct mirror endpoint fallback (without www)
+      if (data == null || data['code'] != 0) {
+        try {
+          final mirrorResponse = await _dio.get(
+            'https://tikwm.com/api/',
+            queryParameters: {'url': cleanUrl, 'hd': '1'},
+            options: Options(
+              sendTimeout: const Duration(seconds: 4),
+              receiveTimeout: const Duration(seconds: 4),
+            ),
+          );
+          if (mirrorResponse.statusCode == 200 && mirrorResponse.data != null) {
+            final raw = mirrorResponse.data;
+            data = raw is Map<String, dynamic> ? raw : (raw is String ? jsonDecode(raw) : null);
+          }
+        } catch (_) {}
       }
 
       if (data != null && data['code'] == 0 && data['data'] is Map) {
         final d = data['data'] as Map;
-        var playUrl = (d['play'] ?? d['hdplay'] ?? d['wmplay'])?.toString();
+        var playUrl = (d['play'] ?? d['hdplay'] ?? d['wmplay'] ?? d['music'])?.toString();
         if (playUrl != null && playUrl.isNotEmpty) {
           if (playUrl.startsWith('/')) {
             playUrl = 'https://www.tikwm.com$playUrl';
@@ -234,7 +261,7 @@ class CloudExtractorService {
           final title = (d['title']?.toString() ?? 'TikTok_Video_${DateTime.now().millisecondsSinceEpoch}')
               .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
               .trim();
-          final format = 'mp4';
+          final format = playUrl.contains('.mp3') ? 'mp3' : 'mp4';
           final thumb = d['cover']?.toString();
           final size = d['size'] is int ? d['size'] as int : null;
 
