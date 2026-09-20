@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'innertube_extractor.dart';
 
 /// Standardized extraction response from Dual Cloud Extractor
 class DualExtractionResult {
@@ -80,6 +81,7 @@ class DualCloudExtractor {
 
     // Build the master parallel racers list
     final List<Future<DualExtractionResult?>> masterRacers = [
+      _tryInnertubeYouTube(targetUrl),
       _tryLocalServerProxy(targetUrl),
       _trySaveTubeDirect(targetUrl),
       _tryTikWMDirect(targetUrl),
@@ -250,13 +252,43 @@ class DualCloudExtractor {
     }
   }
 
-  /// 1. Cloud Run Backend Multi-Resolver (/api/extract) with Parallel Racing ⚡
+  /// 0. Local Innertube YouTube VR Direct Engine (200ms)
+  static Future<DualExtractionResult?> _tryInnertubeYouTube(String videoUrl) async {
+    final lower = videoUrl.toLowerCase();
+    if (!lower.contains('youtube.com') && !lower.contains('youtu.be')) return null;
+
+    final match = RegExp(
+      r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|live\/|watch\?v=|watch\?.+&v=))([\w-]{11})',
+      caseSensitive: false,
+    ).firstMatch(videoUrl);
+    final videoId = match?.group(1);
+    if (videoId == null || videoId.isEmpty) return null;
+
+    try {
+      final innertube = InnertubeExtractor();
+      final res = await innertube.extract(videoId);
+      if (res.success && res.hasStreams) {
+        final stream = res.bestProgressive ?? res.bestVideoOnly;
+        if (stream != null && stream.url.isNotEmpty) {
+          return DualExtractionResult.successful(
+            directUrl: stream.url,
+            title: res.title.isNotEmpty ? res.title : 'YouTube_$videoId',
+            format: 'mp4',
+            size: stream.contentLength,
+            providerUsed: 'محرك Innertube Oculus VR المباشر ⚡',
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// 1. Custom Backend Multi-Resolver (/api/extract) with Parallel Racing ⚡
   static Future<DualExtractionResult?> _tryLocalServerProxy(String videoUrl) async {
+    if (primaryRailwayUrl.isEmpty) return null;
+
     final candidateUris = <Uri>[
-      Uri.parse('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
-      Uri.parse('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract').replace(queryParameters: {'url': videoUrl}),
-      if (primaryRailwayUrl.isNotEmpty)
-        Uri.parse(primaryRailwayUrl).replace(queryParameters: {'url': videoUrl}),
+      Uri.parse(primaryRailwayUrl).replace(queryParameters: {'url': videoUrl}),
     ];
 
     final completer = Completer<DualExtractionResult?>();

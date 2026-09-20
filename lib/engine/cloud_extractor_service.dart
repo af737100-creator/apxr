@@ -6,6 +6,8 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'smart_url_filter.dart';
 import 'headless_media_sniffer.dart';
+import 'innertube_extractor.dart';
+import 'dual_cloud_extractor.dart';
 
 /// [CloudExtractedMedia] holds extracted direct stream information
 class CloudExtractedMedia {
@@ -124,15 +126,13 @@ class CloudExtractorService {
     );
   }
 
-  /// Candidate backend server endpoints for local and cloud environments
+  /// Candidate backend server endpoints for custom self-hosted extractors
   List<String> get _candidateServerEndpoints {
     final list = <String>[];
 
-    // 1. Primary Live Cloud Run Server
-    list.add('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
-    list.add('https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract');
-
-    if (primaryWispbyteUrl.isNotEmpty && primaryWispbyteUrl != defaultWispbyteEndpoint) {
+    if (primaryWispbyteUrl.isNotEmpty &&
+        primaryWispbyteUrl != defaultWispbyteEndpoint &&
+        !primaryWispbyteUrl.contains('78.154.103.45')) {
       list.add(primaryWispbyteUrl);
     }
     return list;
@@ -402,33 +402,87 @@ class CloudExtractorService {
     }
 
     // =========================================================================
-    // 1. TIKTOK SPECIALIZED EXTRACTION (Priority 1 for TikTok / Douyin)
+    // 1. YOUTUBE SPECIALIZED EXTRACTION (Innertube VR Oculus Engine ⚡ - 200ms)
+    // =========================================================================
+    if (isYouTubeUrl(cleanUrl) || isYouTubeUrl(rawCleanUrl)) {
+      final ytId = extractYouTubeVideoId(cleanUrl) ?? extractYouTubeVideoId(rawCleanUrl);
+      if (ytId != null && ytId.isNotEmpty) {
+        try {
+          debugPrint('[CloudExtractorService] ⚡ Running Lightning YouTube Innertube extraction for: $ytId');
+          final innertube = InnertubeExtractor();
+          final innerRes = await innertube.extract(ytId);
+          if (innerRes.success && innerRes.hasStreams) {
+            final best = innerRes.bestProgressive ?? innerRes.bestVideoOnly;
+            if (best != null && best.url.isNotEmpty) {
+              final title = innerRes.title.isNotEmpty ? innerRes.title : 'YouTube_$ytId';
+              debugPrint('✅ [CloudExtractorService] 🏆 Innertube succeeded instantly in ${innerRes.elapsed.inMilliseconds}ms!');
+              return deliver(CloudExtractedMedia(
+                success: true,
+                originalUrl: cleanUrl,
+                directStreamUrl: best.url,
+                title: CloudExtractedMedia.sanitizeFilename(title, 'mp4'),
+                format: 'mp4',
+                quality: best.qualityLabel ?? '720p HD (Innertube ⚡)',
+                thumbnailUrl: innerRes.thumbnail ?? 'https://img.youtube.com/vi/$ytId/hqdefault.jpg',
+                estimatedSizeBytes: best.contentLength,
+                serverUsed: 'YouTube Innertube Oculus VR Engine ⚡',
+                isDirectFallback: false,
+              ));
+            }
+          }
+        } catch (e) {
+          debugPrint('[CloudExtractorService] Innertube notice: $e. Falling back to DualCloudExtractor...');
+        }
+      }
+    }
+
+    // =========================================================================
+    // 2. TIKTOK SPECIALIZED EXTRACTION (Priority 1 for TikTok / Douyin)
     // =========================================================================
     if (isTikTokUrl(cleanUrl) || isTikTokUrl(rawCleanUrl)) {
       final tikTokResult = await _extractTikTokViaTikWM(cleanUrl, originalUrl: rawCleanUrl);
       if (tikTokResult != null && tikTokResult.success) {
         return deliver(tikTokResult);
       }
-      // Immediate Headless Sniffer for TikTok if API fails or is rate-limited
-      try {
-        debugPrint('[CloudExtractorService] 🕵️ TikTok API blocked/failed, triggering Headless Media Sniffer...');
-        final sniffedResult = await HeadlessMediaSniffer.sniffMediaUrl(cleanUrl);
-        if (sniffedResult != null && sniffedResult.success) {
-          return deliver(sniffedResult);
-        }
-      } catch (_) {}
     }
 
     // =========================================================================
-    // 2. BACKEND SERVERS EXTRACTION (yt-dlp Native SpeedCore ⚡)
+    // 3. DUAL CLOUD EXTRACTOR (10+ Scrapers: Instagram, Facebook, Twitter, TikTok)
     // =========================================================================
-    final backendResult = await _extractViaBackendServers(cleanUrl);
-    if (backendResult != null && backendResult.success) {
-      return deliver(backendResult);
+    try {
+      debugPrint('[CloudExtractorService] 🚀 Running DualCloudExtractor for: $cleanUrl');
+      final dualRes = await DualCloudExtractor.extract(cleanUrl);
+      if (dualRes.success && dualRes.directUrl != null && dualRes.directUrl!.isNotEmpty) {
+        debugPrint('✅ [CloudExtractorService] DualCloudExtractor succeeded via: ${dualRes.providerUsed}');
+        final fmt = dualRes.format ?? 'mp4';
+        return deliver(CloudExtractedMedia(
+          success: true,
+          originalUrl: cleanUrl,
+          directStreamUrl: dualRes.directUrl!,
+          title: CloudExtractedMedia.sanitizeFilename(dualRes.title ?? 'Media_${DateTime.now().millisecondsSinceEpoch}', fmt),
+          format: fmt,
+          quality: dualRes.providerUsed ?? 'Dual Cloud Turbo ⚡',
+          estimatedSizeBytes: dualRes.size,
+          serverUsed: dualRes.providerUsed,
+          isDirectFallback: false,
+        ));
+      }
+    } catch (dualErr) {
+      debugPrint('[CloudExtractorService] DualCloudExtractor notice: $dualErr');
     }
 
     // =========================================================================
-    // 3. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
+    // 4. CUSTOM BACKEND SERVERS (if user configured a custom endpoint)
+    // =========================================================================
+    if (_candidateServerEndpoints.isNotEmpty) {
+      final backendResult = await _extractViaBackendServers(cleanUrl);
+      if (backendResult != null && backendResult.success) {
+        return deliver(backendResult);
+      }
+    }
+
+    // =========================================================================
+    // 5. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
     // =========================================================================
     try {
       debugPrint('[CloudExtractorService] 🕵️ Trying Headless Media Sniffer (VidMate Engine)...');
@@ -442,7 +496,7 @@ class CloudExtractorService {
     }
 
     // =========================================================================
-    // 5. ALL EXTRACTION ENGINES EXHAUSTED
+    // 6. ALL EXTRACTION ENGINES EXHAUSTED
     // =========================================================================
     const finalErrorMessage = 'تعذر استخراج الرابط المباشر من السيرفرات السحابية. يرجى استخدام المتصفح المدمج 🌐 لتشغيله وتحميله.';
     debugPrint('❌ $finalErrorMessage');

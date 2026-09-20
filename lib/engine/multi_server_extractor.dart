@@ -82,45 +82,20 @@ class MultiServerExtractor {
         ? customWispbyteUrl.trim()
         : wispbyteServerUrl;
 
-    return [
-      const ExtractionServerConfig(
+    final servers = <ExtractionServerConfig>[];
+
+    if (activeWispbyteUrl.isNotEmpty &&
+        !activeWispbyteUrl.contains('78.154.103.45') &&
+        activeWispbyteUrl != defaultWispbyteEndpoint) {
+      servers.add(ExtractionServerConfig(
         priority: 1,
-        name: 'السيرفر 1 (سحابي خارق ⚡): Cloud Run Primary Engine',
-        url: 'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
+        name: 'السيرفر المخصص: Custom Wispbyte Engine',
+        url: activeWispbyteUrl,
         type: 'wispbyte',
-      ),
-      const ExtractionServerConfig(
-        priority: 2,
-        name: 'السيرفر 2 (مرآة سحابية ⚡): Cloud Run Mirror Engine',
-        url: 'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
-        type: 'wispbyte',
-      ),
-      if (activeWispbyteUrl.isNotEmpty && !activeWispbyteUrl.contains('78.154.103.45'))
-        ExtractionServerConfig(
-          priority: 3,
-          name: 'السيرفر 3 (احتياطي سحابي مخصص): Custom Server Direct',
-          url: activeWispbyteUrl,
-          type: 'wispbyte',
-        ),
-      const ExtractionServerConfig(
-        priority: 4,
-        name: 'السيرفر 4 (احتياطي): Cobalt Tools API',
-        url: 'https://api.cobalt.tools/api/json',
-        type: 'cobalt',
-      ),
-      const ExtractionServerConfig(
-        priority: 5,
-        name: 'السيرفر 5 (احتياطي): Wuk.sh Cobalt API',
-        url: 'https://co.wuk.sh/api/json',
-        type: 'cobalt',
-      ),
-      const ExtractionServerConfig(
-        priority: 6,
-        name: 'السيرفر 6 (احتياطي): Cobalt Stream API',
-        url: 'https://cobalt.stream/api/json',
-        type: 'cobalt',
-      ),
-    ];
+      ));
+    }
+
+    return servers;
   }
 
   /// Main extraction method with Parallel Racing for Cloud servers and fast failover
@@ -344,24 +319,6 @@ class MultiServerExtractor {
       debugPrint('  - URL: $targetUrl');
       debugPrint('  - Reason: $reason');
       debugPrint('  - Timestamp: ${DateTime.now().toIso8601String()}');
-
-      // Attempt to report to backend / Firebase telemetry endpoint if configured
-      final telemetryClient = HttpClient();
-      telemetryClient.connectionTimeout = const Duration(seconds: 1);
-      try {
-        final uri = Uri.parse('https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/telemetry/extractor-failure');
-        final req = await telemetryClient.postUrl(uri);
-        req.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-        req.write(jsonEncode({
-          'event': 'extractor_failure',
-          'url': targetUrl,
-          'reason': reason,
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        }));
-        final res = await req.close();
-        await res.drain();
-      } catch (_) {}
-      telemetryClient.close(force: true);
     } catch (e) {
       debugPrint('[FirebaseAnalytics] ⚠️ Logging error: $e');
     }

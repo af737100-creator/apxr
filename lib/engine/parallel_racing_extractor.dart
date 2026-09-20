@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'innertube_extractor.dart';
+import 'dual_cloud_extractor.dart';
 
 class RacingResult {
   final bool success;
@@ -28,11 +30,8 @@ class RacingResult {
 }
 
 class ParallelRacingExtractor {
-  /// Live Production Cloud Run instances (Clean, SSL-encrypted, zero localhost)
-  static const List<String> _cloudRunServers = [
-    'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
-    'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app/api/extract',
-  ];
+  /// Custom backend server endpoints
+  static const List<String> _cloudRunServers = [];
 
   static const List<String> _cobaltServers = [
     'https://api.cobalt.tools',
@@ -53,14 +52,11 @@ class ParallelRacingExtractor {
     // 1. Prepare candidate futures for concurrent execution
     final futures = <Future<RacingResult?>>[];
 
-    // Cloud Run high-speed multi-resolvers
-    for (final server in _cloudRunServers) {
-      futures.add(_tryCloudRun(server, targetUrl, stopwatch));
-    }
-
-    // Cobalt instances (Backup)
-    for (final server in _cobaltServers) {
-      futures.add(_tryCobalt(server, targetUrl, stopwatch));
+    // YouTube Lightning Innertube Oculus VR (200ms)
+    if (targetUrl.contains('youtube.com') || targetUrl.contains('youtu.be')) {
+      futures.add(_tryInnertube(targetUrl, stopwatch));
+      futures.add(_tryInvidious(targetUrl, stopwatch));
+      futures.add(_tryPiped(targetUrl, stopwatch));
     }
 
     // TikTok direct API
@@ -68,10 +64,12 @@ class ParallelRacingExtractor {
       futures.add(_tryTikWM(targetUrl, stopwatch));
     }
 
-    // YouTube direct resolvers
-    if (targetUrl.contains('youtube.com') || targetUrl.contains('youtu.be')) {
-      futures.add(_tryInvidious(targetUrl, stopwatch));
-      futures.add(_tryPiped(targetUrl, stopwatch));
+    // Universal Dual Cloud racer (Instagram, Facebook, Twitter, etc.)
+    futures.add(_tryDualCloud(targetUrl, stopwatch));
+
+    // Custom Cloud Run resolvers if configured
+    for (final server in _cloudRunServers) {
+      futures.add(_tryCloudRun(server, targetUrl, stopwatch));
     }
 
     // 2. Race: First successful response completes immediately
@@ -125,6 +123,54 @@ class ParallelRacingExtractor {
     } catch (_) {
       return null;
     }
+  }
+
+  static Future<RacingResult?> _tryInnertube(String targetUrl, Stopwatch sw) async {
+    final match = RegExp(
+      r'(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|shorts\/|live\/|watch\?v=|watch\?.+&v=))([\w-]{11})',
+      caseSensitive: false,
+    ).firstMatch(targetUrl);
+    final videoId = match?.group(1);
+    if (videoId == null || videoId.isEmpty) return null;
+
+    try {
+      final innertube = InnertubeExtractor();
+      final res = await innertube.extract(videoId);
+      if (res.success && res.hasStreams) {
+        final stream = res.bestProgressive ?? res.bestVideoOnly;
+        if (stream != null && stream.url.isNotEmpty) {
+          return RacingResult(
+            success: true,
+            directUrl: stream.url,
+            title: res.title.isNotEmpty ? res.title : 'YouTube_$videoId',
+            format: 'mp4',
+            size: stream.contentLength,
+            thumbnail: res.thumbnail,
+            serverUsed: 'محرك Innertube VR السريع ⚡',
+            elapsed: sw.elapsed,
+          );
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<RacingResult?> _tryDualCloud(String targetUrl, Stopwatch sw) async {
+    try {
+      final res = await DualCloudExtractor.extract(targetUrl);
+      if (res.success && res.directUrl != null && res.directUrl!.isNotEmpty) {
+        return RacingResult(
+          success: true,
+          directUrl: res.directUrl,
+          title: res.title,
+          format: res.format ?? 'mp4',
+          size: res.size,
+          serverUsed: res.providerUsed ?? 'Dual Cloud Engine ⚡',
+          elapsed: sw.elapsed,
+        );
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Cloud Run API extractor

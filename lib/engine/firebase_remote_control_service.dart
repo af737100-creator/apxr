@@ -138,23 +138,23 @@ class FirebaseRemoteControlService extends ChangeNotifier {
     // 1. Initial simulated / fallback token for instant readiness
     _fcmToken = 'fcm_token_hyperpulse_${DateTime.now().millisecondsSinceEpoch}';
 
-    // 2. Initial fetch from server remote control room & sync
-    await fetchRemoteConfigAndNotifications();
-
-    // 3. Periodic real-time poll fallback (keeps all devices perfectly synced with control room)
-    _syncTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      fetchRemoteConfigAndNotifications();
-    });
+    // 2. Only fetch and set up periodic timer if valid external hosts exist
+    if (_candidateHosts.isNotEmpty) {
+      await fetchRemoteConfigAndNotifications();
+      _syncTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+        fetchRemoteConfigAndNotifications();
+      });
+    }
   }
+
+  /// Configurable remote hosts list (defaults to empty unless user configures a live server)
+  static final List<String> _candidateHosts = [];
 
   /// Syncs remote config & notification broadcasts from the HyperPulse Control Server
   Future<void> fetchRemoteConfigAndNotifications() async {
-    final candidateHosts = [
-      'https://ais-dev-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
-      'https://ais-pre-xup7lx4kbcs2dslmo2kjbi-470430127443.europe-west2.run.app',
-    ];
+    if (_candidateHosts.isEmpty) return;
 
-    for (final host in candidateHosts) {
+    for (final host in _candidateHosts) {
       try {
         final client = http.Client();
         // 1. Fetch Remote Config
