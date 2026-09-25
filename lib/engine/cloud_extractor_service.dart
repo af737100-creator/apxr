@@ -483,16 +483,19 @@ class CloudExtractorService {
 
     // =========================================================================
     // 5. VIDMATE ARCHITECTURAL TIER: HEADLESS WEBVIEW MEDIA SNIFFER ⚡
+    // (Bypassed for YouTube because YouTube blocks headless autoplay and triggers low-memory warnings)
     // =========================================================================
-    try {
-      debugPrint('[CloudExtractorService] 🕵️ Trying Headless Media Sniffer (VidMate Engine)...');
-      final sniffedResult = await HeadlessMediaSniffer.sniffMediaUrl(cleanUrl);
-      if (sniffedResult != null && sniffedResult.success) {
-        debugPrint('✅ [CloudExtractorService] Sniffer successfully captured stream: ${sniffedResult.directStreamUrl}');
-        return deliver(sniffedResult);
+    if (!isYouTubeUrl(cleanUrl) && !isYouTubeUrl(rawCleanUrl)) {
+      try {
+        debugPrint('[CloudExtractorService] 🕵️ Trying Headless Media Sniffer (VidMate Engine)...');
+        final sniffedResult = await HeadlessMediaSniffer.sniffMediaUrl(cleanUrl);
+        if (sniffedResult != null && sniffedResult.success) {
+          debugPrint('✅ [CloudExtractorService] Sniffer successfully captured stream: ${sniffedResult.directStreamUrl}');
+          return deliver(sniffedResult);
+        }
+      } catch (e) {
+        debugPrint('[CloudExtractorService] Sniffer notice: $e');
       }
-    } catch (e) {
-      debugPrint('[CloudExtractorService] Sniffer notice: $e');
     }
 
     // =========================================================================
