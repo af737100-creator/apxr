@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../engine/smart_url_filter.dart';
 import '../engine/download_manager_service.dart';
@@ -701,7 +702,18 @@ class _SmartStealthBrowserState extends State<SmartStealthBrowser> {
           ),
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      try {
+        await Sentry.captureException(
+          e,
+          stackTrace: stackTrace,
+          withScope: (scope) {
+            scope.setTag('engine', 'smart_browser');
+            scope.setExtra('url', url);
+            scope.setExtra('customTitle', customTitle);
+          },
+        );
+      } catch (_) {}
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

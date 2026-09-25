@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import '../models/device_metrics.dart';
 import '../models/download_task.dart';
 import '../models/segment_chunk.dart';
@@ -571,7 +572,20 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
           rethrow;
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
+      // ⚡ Report download/extraction failure directly to GlitchTip/Sentry
+      try {
+        await Sentry.captureException(
+          e,
+          stackTrace: stackTrace,
+          withScope: (scope) {
+            scope.setTag('engine', 'pulse_download');
+            scope.setExtra('url', cleanUrl);
+            scope.setExtra('fileName', extractedFileName);
+          },
+        );
+      } catch (_) {}
+
       final friendlyError = HyperPulseErrorHandler.getFriendlyMessage(e);
       setState(() {
         _isDownloading = false;

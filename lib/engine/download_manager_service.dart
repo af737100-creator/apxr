@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:sentry_flutter/sentry_flutter.dart';
 import '../models/download_task.dart';
 import '../models/segment_chunk.dart';
 import '../models/device_metrics.dart';
@@ -538,8 +539,21 @@ class DownloadManagerService extends ChangeNotifier {
       }
 
       notifyListeners();
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('[DownloadManagerService] Download error: $e');
+      try {
+        await Sentry.captureException(
+          e,
+          stackTrace: stackTrace,
+          withScope: (scope) {
+            scope.setTag('engine', 'download_manager');
+            scope.setExtra('taskId', task.id);
+            scope.setExtra('sourceUrl', task.sourceUrl);
+            scope.setExtra('fileName', task.fileName);
+            scope.setExtra('isVideo', task.isVideo);
+          },
+        );
+      } catch (_) {}
       task.status = DownloadStatus.failed;
       task.error = e.toString();
       _subscriptions[task.id]?.cancel();
