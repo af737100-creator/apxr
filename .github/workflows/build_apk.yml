@@ -35,6 +35,24 @@ jobs:
             flutter create --platforms=android .
           fi
 
+      - name: Configure Global Gradle Properties
+        run: |
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/gradle.properties
+          org.gradle.jvmargs=-Xmx4G -XX:+HeapDumpOnOutOfMemoryError
+          android.useAndroidX=true
+          android.enableJetifier=true
+          kotlin.jvm.target.validation.mode=ignore
+          EOF
+          if [ -f "android/gradle.properties" ]; then
+            sed -i '/kotlin.jvm.target.validation.mode/d' android/gradle.properties || true
+            echo "kotlin.jvm.target.validation.mode=ignore" >> android/gradle.properties
+          fi
+          if [ -f "flutter_engine/android/gradle.properties" ]; then
+            sed -i '/kotlin.jvm.target.validation.mode/d' flutter_engine/android/gradle.properties || true
+            echo "kotlin.jvm.target.validation.mode=ignore" >> flutter_engine/android/gradle.properties
+          fi
+
       - name: Install Flutter Dependencies
         run: flutter pub get
 
@@ -102,6 +120,9 @@ jobs:
                  flutter_engine/android/app/src/main/res/mipmap-xxxhdpi || true
           flutter clean
           flutter pub get
+          mkdir -p ~/.gradle
+          echo "kotlin.jvm.target.validation.mode=ignore" >> ~/.gradle/gradle.properties
+          [ -f "android/gradle.properties" ] && echo "kotlin.jvm.target.validation.mode=ignore" >> android/gradle.properties
 
       - name: Build Universal Release APK
         run: |
@@ -110,10 +131,15 @@ jobs:
                  android/app/src/main/res/mipmap-xhdpi \
                  android/app/src/main/res/mipmap-xxhdpi \
                  android/app/src/main/res/mipmap-xxxhdpi || true
+          mkdir -p ~/.gradle
+          echo "kotlin.jvm.target.validation.mode=ignore" >> ~/.gradle/gradle.properties
           flutter build apk --release --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Build Split ABI APKs (Optimized size)
-        run: flutter build apk --release --split-per-abi --no-tree-shake-icons --android-skip-build-dependency-validation
+        run: |
+          mkdir -p ~/.gradle
+          echo "kotlin.jvm.target.validation.mode=ignore" >> ~/.gradle/gradle.properties
+          flutter build apk --release --split-per-abi --no-tree-shake-icons --android-skip-build-dependency-validation
 
       - name: Upload Universal APK Artifact
         uses: actions/upload-artifact@v4
