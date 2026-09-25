@@ -171,6 +171,13 @@ class DownloadManagerService extends ChangeNotifier {
               final stateData = await SmartResumeManager.loadCheckpoints(targetFilePath);
               if (stateData != null) {
                 final sourceUrl = stateData['sourceUrl']?.toString() ?? '';
+                // If this is an expired signed stream URL (e.g. YouTube googlevideo), discard stale state
+                if (_isExpiredStreamUrl(sourceUrl)) {
+                  try {
+                    await entry.delete();
+                  } catch (_) {}
+                  continue;
+                }
                 final totalSize = stateData['totalSizeBytes'] as int? ?? 0;
                 final segs = <SegmentChunk>[];
                 if (stateData['segments'] is List) {
@@ -202,6 +209,21 @@ class DownloadManagerService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[DownloadManagerService] Error recovering orphan state files: $e');
     }
+  }
+
+  /// Checks if a signed video stream (like YouTube googlevideo) has expired
+  static bool _isExpiredStreamUrl(String url) {
+    if (url.contains('googlevideo.com')) {
+      final match = RegExp(r'[?&]expire=(\d+)').firstMatch(url);
+      if (match != null) {
+        final expSec = int.tryParse(match.group(1)!);
+        if (expSec != null) {
+          final nowSec = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          return nowSec > expSec;
+        }
+      }
+    }
+    return false;
   }
 
   /// Pauses all currently active downloads

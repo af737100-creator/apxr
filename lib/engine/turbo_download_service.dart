@@ -368,7 +368,10 @@ class TurboDownloadService {
 
         return; // Success!
       } catch (e) {
-        if (attempts >= maxZeroByteRetries) {
+        final is403 = (e is DioException && (e.response?.statusCode == 403 || e.response?.statusCode == 401)) ||
+            e.toString().contains('403') ||
+            e.toString().contains('Forbidden');
+        if (is403 || attempts >= maxZeroByteRetries) {
           rethrow;
         }
         debugPrint('[TurboDownloadService] Download attempt $attempts failed with: $e. Retrying...');
