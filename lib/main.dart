@@ -1,35 +1,44 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 import 'ui/pulse_download_screen.dart';
 
-void main() {
-  runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-    // Catch any Flutter framework render/layout errors without crashing
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      debugPrint('[HyperPulse Safety] Caught framework error: ${details.exceptionAsString()}');
-    };
+  // Configure Deep Carbon Stealth Theme for Android System Bars
+  try {
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: Color(0xFF0A0A0C),
+        systemNavigationBarIconBrightness: Brightness.light,
+        systemNavigationBarDividerColor: Colors.transparent,
+      ),
+    );
+  } catch (_) {}
 
-    // Configure Deep Carbon Stealth Theme for Android System Bars
-    try {
-      SystemChrome.setSystemUIOverlayStyle(
-        const SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: Brightness.light,
-          systemNavigationBarColor: Color(0xFF0A0A0C),
-          systemNavigationBarIconBrightness: Brightness.light,
-          systemNavigationBarDividerColor: Colors.transparent,
-        ),
-      );
-    } catch (_) {}
-
-    runApp(const HyperPulseApp());
-  }, (error, stackTrace) {
-    debugPrint('[HyperPulse Safety] Uncaught asynchronous error: $error\n$stackTrace');
-  });
+  // Initialize GlitchTip & Sentry Flutter Real-Time Error Tracking SDK
+  await SentryFlutter.init(
+    (options) => options
+      ..dsn = const String.fromEnvironment(
+        'SENTRY_DSN',
+        defaultValue: 'https://a28c32fad54a4457a1a636d821200065@app.glitchtip.com/28213',
+      )
+      ..tracesSampleRate = 0.01 // 1% of transactions
+      ..enableAutoSessionTracking = false // GlitchTip does not support sessions
+      ..attachScreenshot = true
+      ..attachViewHierarchy = true
+      ..environment = 'production',
+    appRunner: () => runApp(
+      DefaultAssetBundle(
+        bundle: SentryAssetBundle(),
+        child: const HyperPulseApp(),
+      ),
+    ),
+  );
 }
 
 class HyperPulseApp extends StatelessWidget {

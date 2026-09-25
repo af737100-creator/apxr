@@ -1,12 +1,42 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:sentry_flutter/sentry_flutter.dart';
 
 /// Centralized translator for system, network, and I/O exceptions
 /// into clear, user-friendly messages for the cockpit HUD.
 class HyperPulseErrorHandler {
-  static String getFriendlyMessage(dynamic error) {
+  /// Captures exception and dispatches telemetry to GlitchTip / Sentry
+  static void captureException(dynamic error, {dynamic stackTrace, String? tag}) {
+    try {
+      Sentry.captureException(
+        error,
+        stackTrace: stackTrace,
+        withScope: (scope) {
+          if (tag != null) {
+            scope.setTag('source', tag);
+          }
+          scope.setTag('app', 'PulseSphere');
+        },
+      );
+    } catch (_) {}
+  }
+
+  /// Sends a test verification exception directly to GlitchTip
+  static Future<bool> sendTestGlitchTipError() async {
+    try {
+      throw Exception('اختبار GlitchTip: تم تسجيل هذا الخطأ التجريبي بنجاح لتأكيد عمل تتبع الأخطاء في PulseSphere!');
+    } catch (e, stack) {
+      final sentryId = await Sentry.captureException(e, stackTrace: stack);
+      return sentryId != SentryId.empty;
+    }
+  }
+
+  static String getFriendlyMessage(dynamic error, {dynamic stackTrace}) {
     if (error == null) return 'حدث خطأ غير معروف';
+
+    // Report to GlitchTip / Sentry
+    captureException(error, stackTrace: stackTrace);
 
     if (error is SocketException) {
       return 'فشل الاتصال بالشبكة، حاول مرة أخرى';

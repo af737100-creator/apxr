@@ -76,9 +76,13 @@ export async function extractViaYtDlp(url: string, isAudio = false): Promise<Ext
             const format = info.ext || (isAudio ? 'm4a' : 'mp4');
             const size = info.filesize || info.filesize_approx || 0;
 
+            const finalDirectUrl = streamUrl.includes('googlevideo.com')
+              ? `/api/proxy-download?url=${encodeURIComponent(streamUrl)}&filename=${encodeURIComponent(cleanTitle + '.' + format)}`
+              : streamUrl;
+
             return resolve({
               success: true,
-              direct_url: streamUrl,
+              direct_url: finalDirectUrl,
               title: cleanTitle,
               format,
               size,
@@ -1295,6 +1299,10 @@ export async function extractUniversalMedia(rawUrl: string): Promise<ExtractionR
         )
       );
       if (winner && winner.direct_url) {
+        if (winner.direct_url.includes('googlevideo.com') && !winner.direct_url.includes('/api/proxy-download')) {
+          const fn = `${(winner.title || 'YouTube_Video').replace(/[\\/:*?"<>|]/g, '_')}.${winner.format || 'mp4'}`;
+          winner.direct_url = `/api/proxy-download?url=${encodeURIComponent(winner.direct_url)}&filename=${encodeURIComponent(fn)}`;
+        }
         console.log(`[UniversalExtractor] 🏆 YouTube Race Winner: ${winner.provider}`);
         return winner;
       }
