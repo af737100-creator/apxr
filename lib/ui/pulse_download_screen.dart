@@ -90,7 +90,7 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
   DownloadTask? _currentTask;
 
   // Speed Waveform Telemetry History (Last 15 sample points for smooth graph)
-  final List<double> _speedHistory = List.filled(16, 0.0);
+  final List<double> _speedHistory = List.filled(16, 0.0, growable: true);
   Timer? _speedSampleTimer;
   Timer? _prefetchDebounceTimer;
 
@@ -163,7 +163,9 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
     _speedSampleTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
       setState(() {
-        _speedHistory.removeAt(0);
+        if (_speedHistory.isNotEmpty) {
+          _speedHistory.removeAt(0);
+        }
         _speedHistory.add(_isDownloading ? _currentSpeedBps : 0.0);
       });
     });
