@@ -25,7 +25,7 @@ void main() async {
     (options) => options
       ..dsn = const String.fromEnvironment(
         'SENTRY_DSN',
-        defaultValue: 'https://a28c32fad54a4457a1a636d821200065@app.glitchtip.com/28213',
+        defaultValue: 'https://31493a6c099a4fe78a63159f31b0a41f@app.glitchtip.com/28276',
       )
       ..tracesSampleRate = 0.01 // 1% of transactions
       ..enableAutoSessionTracking = false // GlitchTip does not support sessions
