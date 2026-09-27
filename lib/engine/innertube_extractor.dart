@@ -42,6 +42,15 @@ class InnertubeClient {
     osVersion: '12',
   );
 
+  /// TV Embedded Client (TVHTML5_SIMPLY_EMBEDDED_PLAYER) - famously does not require PO tokens
+  static const tvEmbedded = InnertubeClient(
+    name: 'TVHTML5_SIMPLY_EMBEDDED_PLAYER',
+    version: '2.0',
+    userAgent: 'Mozilla/5.0 (PlayStation 4 3.11) AppleWebKit/537.78 (KHTML, like Gecko)',
+    clientId: 85,
+    apiKey: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+  );
+
   /// Native iOS client context profile
   static const ios = InnertubeClient(
     name: 'IOS',
@@ -53,6 +62,20 @@ class InnertubeClient {
     deviceModel: 'iPhone16,2',
     osName: 'iPhone',
     osVersion: '17.5.1.21F90',
+  );
+
+  /// Android Native client context profile
+  static const android = InnertubeClient(
+    name: 'ANDROID',
+    version: '19.16.39',
+    userAgent: 'com.google.android.youtube/19.16.39 (Linux; U; Android 14; Pixel 8) gzip',
+    clientId: 3,
+    apiKey: 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',
+    androidSdk: '34',
+    deviceMake: 'Google',
+    deviceModel: 'Pixel 8',
+    osName: 'Android',
+    osVersion: '14',
   );
 }
 
@@ -161,17 +184,31 @@ class InnertubeExtractor {
       return vr;
     }
 
-    // 2. Try iOS client as fallback
+    // 2. Try TV Embedded (TVHTML5_SIMPLY_EMBEDDED_PLAYER) - bypasses bot check without PO token
+    final tv = await _extractWithClient(videoId, InnertubeClient.tvEmbedded, sw);
+    if (tv.success && tv.hasStreams) {
+      debugPrint('[InnertubeExtractor] ⚡ نجح استخراج TV Embedded في ${tv.elapsed.inMilliseconds}ms');
+      return tv;
+    }
+
+    // 3. Try iOS client as fallback
     final ios = await _extractWithClient(videoId, InnertubeClient.ios, sw);
     if (ios.success && ios.hasStreams) {
       debugPrint('[InnertubeExtractor] ⚡ نجح استخراج iOS في ${ios.elapsed.inMilliseconds}ms');
       return ios;
     }
 
+    // 4. Try Android Native client
+    final androidRes = await _extractWithClient(videoId, InnertubeClient.android, sw);
+    if (androidRes.success && androidRes.hasStreams) {
+      debugPrint('[InnertubeExtractor] ⚡ نجح استخراج Android Native في ${androidRes.elapsed.inMilliseconds}ms');
+      return androidRes;
+    }
+
     return InnertubeResult(
       success: false,
       videoId: videoId,
-      error: vr.error ?? ios.error ?? 'فشل استخراج الفيديو عبر بروتوكول Innertube',
+      error: vr.error ?? tv.error ?? ios.error ?? androidRes.error ?? 'فشل استخراج الفيديو عبر بروتوكول Innertube',
       elapsed: sw.elapsed,
     );
   }

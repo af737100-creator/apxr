@@ -20,17 +20,22 @@ void main() async {
     );
   } catch (_) {}
 
-  // Initialize GlitchTip & Sentry Flutter Real-Time Error Tracking SDK
+  // Initialize GlitchTip & Sentry Flutter Real-Time Error Tracking & Performance SDK
   await SentryFlutter.init(
     (options) => options
       ..dsn = const String.fromEnvironment(
         'SENTRY_DSN',
         defaultValue: 'https://31493a6c099a4fe78a63159f31b0a41f@app.glitchtip.com/28276',
       )
-      ..tracesSampleRate = 0.01 // 1% of transactions
+      ..tracesSampleRate = 1.0 // 100% of transactions enabled for GlitchTip Performance (أداء)
       ..enableAutoSessionTracking = false // GlitchTip does not support sessions
       ..attachScreenshot = true
       ..attachViewHierarchy = true
+      ..sendDefaultPii = true
+      ..maxBreadcrumbs = 300
+      ..enableAppLifecycleBreadcrumbs = true
+      ..enableUserInteractionBreadcrumbs = true
+      ..enableAutoPerformanceTracing = true
       ..environment = 'production',
     appRunner: () => runApp(
       DefaultAssetBundle(

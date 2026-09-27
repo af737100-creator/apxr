@@ -58,10 +58,10 @@ class DualCloudExtractor {
   /// Modern Cobalt API instances pool
   static final List<String> cobaltInstances = [
     'https://api.cobalt.tools',
-    'https://cobalt.api.redteam.tools',
-    'https://co.wuk.sh',
     'https://cobalt.stream',
     'https://cobalt.hyonsu.com',
+    'https://cobalt-api.kwiatekm.pl',
+    'https://cobalt.canine.tools',
   ];
 
   static const Duration quickTimeout = Duration(milliseconds: 4000);
@@ -1097,10 +1097,13 @@ class DualCloudExtractor {
     if (videoId == null) return null;
 
     final instances = [
-      'https://inv.tux.pizza',
+      'https://inv.nadeko.net',
       'https://invidious.nerdvpn.de',
       'https://yewtu.be',
       'https://iv.melmac.space',
+      'https://invidious.jing.rocks',
+      'https://inv.vern.cc',
+      'https://invidious.private.coffee',
     ];
 
     final client = http.Client();
@@ -1146,6 +1149,9 @@ class DualCloudExtractor {
     final instances = [
       'https://pipedapi.kavin.rocks',
       'https://api.piped.privacydev.net',
+      'https://pipedapi.tokhmi.xyz',
+      'https://api.piped.projectsegfau.lt',
+      'https://piped-api.lunar.icu',
     ];
 
     final client = http.Client();

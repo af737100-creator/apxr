@@ -545,18 +545,21 @@ class CloudExtractorService {
   }
 
   static bool isInstagramUrl(String rawUrl) {
+    if (isDirectMediaCdnStream(rawUrl)) return false;
     final lower = rawUrl.toLowerCase();
-    return lower.contains('instagram.com');
+    return lower.contains('instagram.com') && !lower.contains('cdninstagram.com');
   }
 
   static bool isFacebookUrl(String rawUrl) {
+    if (isDirectMediaCdnStream(rawUrl)) return false;
     final lower = rawUrl.toLowerCase();
-    return lower.contains('facebook.com') || lower.contains('fb.watch') || lower.contains('fb.com');
+    return (lower.contains('facebook.com') || lower.contains('fb.watch') || lower.contains('fb.com')) && !lower.contains('fbcdn.net');
   }
 
   static bool isTwitterUrl(String rawUrl) {
+    if (isDirectMediaCdnStream(rawUrl)) return false;
     final lower = rawUrl.toLowerCase();
-    return lower.contains('twitter.com') || lower.contains('x.com');
+    return (lower.contains('twitter.com') || lower.contains('x.com')) && !lower.contains('twimg.com');
   }
 
   static String? extractYouTubeVideoId(String rawUrl) {
