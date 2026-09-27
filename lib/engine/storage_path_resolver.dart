@@ -347,7 +347,7 @@ class StoragePathResolver {
     return locations;
   }
 
-  /// Helper to test write permissions inside a directory
+  /// Helper to test write and rename permissions inside a directory (vital for Scoped Storage compatibility)
   static Future<bool> _isWritable(String path) async {
     try {
       final dir = Directory(path);
@@ -357,7 +357,10 @@ class StoragePathResolver {
       final testFile = File(p.join(path, '.hyperpulse_write_test_${DateTime.now().millisecondsSinceEpoch}'));
       await testFile.writeAsString('test', flush: true);
       if (await testFile.exists()) {
-        await testFile.delete();
+        // Also test rename (crucial for Scoped Storage compatibility)
+        final renamedFile = File('${testFile.path}_renamed');
+        await testFile.rename(renamedFile.path);
+        await renamedFile.delete();
       }
       return true;
     } catch (_) {

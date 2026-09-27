@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import '../models/download_task.dart';
 import '../models/segment_chunk.dart';
@@ -73,10 +74,15 @@ class DownloadManagerService extends ChangeNotifier {
     await refreshCompletedDownloadsFromStorage();
   }
 
-  /// Path to task registry file
+  /// Path to task registry file (stored in app private documents sandbox to guarantee zero OS permission errors)
   Future<String> _getRegistryFilePath() async {
-    final baseDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: false);
-    return '$baseDir/.hyperpulse_tasks_registry.json';
+    try {
+      final appDocDir = await getApplicationDocumentsDirectory();
+      return p.join(appDocDir.path, '.hyperpulse_tasks_registry.json');
+    } catch (_) {
+      final baseDir = await StoragePathResolver.resolveDownloadDirectory(isMediaVideo: false, preferPublicDownloads: false);
+      return p.join(baseDir, '.hyperpulse_tasks_registry.json');
+    }
   }
 
   /// Saves active and paused tasks to disk

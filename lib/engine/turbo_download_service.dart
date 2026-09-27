@@ -22,6 +22,7 @@ import 'universal_app_store_resolver.dart';
 import 'watermark_service.dart';
 import 'innertube_extractor.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 /// Event dispatched to listeners with real-time download telemetry.
 class TurboProgressEvent {
@@ -306,14 +307,46 @@ class TurboDownloadService {
               await finalFile.delete();
             } catch (_) {}
           }
+          bool finalized = false;
           try {
             await tempFile.rename(task.fullFilePath);
+            finalized = true;
           } catch (_) {
-            // Fallback for cross-device / Scoped storage boundary where rename is not supported
-            await tempFile.copy(task.fullFilePath);
             try {
-              await tempFile.delete();
-            } catch (_) {}
+              // Fallback for cross-device / Scoped storage boundary where rename is not supported
+              await tempFile.copy(task.fullFilePath);
+              finalized = true;
+              try {
+                await tempFile.delete();
+              } catch (_) {}
+            } catch (copyErr) {
+              debugPrint('[TurboDownloadService] Direct public rename/copy failed: $copyErr');
+            }
+          }
+
+          // If Scoped Storage blocked direct POSIX write to public folder (errno = 13):
+          // Save to guaranteed app external sandbox, then native Android MediaStore exports it!
+          if (!finalized) {
+            try {
+              final appDir = await getExternalStorageDirectory() ?? await getApplicationDocumentsDirectory();
+              final safeFolder = Directory(p.join(appDir.path, 'Downloads'));
+              if (!await safeFolder.exists()) {
+                await safeFolder.create(recursive: true);
+              }
+              final safeFilePath = p.join(safeFolder.path, task.fileName);
+              try {
+                await tempFile.rename(safeFilePath);
+              } catch (_) {
+                await tempFile.copy(safeFilePath);
+                try { await tempFile.delete(); } catch (_) {}
+              }
+              task.destinationDirectory = safeFolder.path;
+              task.fullFilePath = safeFilePath;
+              finalized = true;
+              debugPrint('[TurboDownloadService] 🛡️ Fallback to safe sandbox directory successful: $safeFilePath');
+            } catch (sandboxErr) {
+              debugPrint('[TurboDownloadService] Sandbox finalize failed: $sandboxErr');
+            }
           }
         }
 
