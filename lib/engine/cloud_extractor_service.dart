@@ -513,8 +513,53 @@ class CloudExtractorService {
   /// Alias for extractDirectMedia
   Future<CloudExtractedMedia> extractMedia(String webpageUrl) => extractDirectMedia(webpageUrl);
 
+  /// Checks if URL is already a direct CDN media stream (video/audio bytes)
+  /// and therefore should be downloaded directly without re-extracting via cloud scraping.
+  static bool isDirectMediaCdnStream(String rawUrl) {
+    final lower = rawUrl.toLowerCase();
+    final uri = Uri.tryParse(rawUrl);
+    final host = uri?.host.toLowerCase() ?? '';
+    final path = uri?.path.toLowerCase() ?? '';
+
+    // Direct CDN video hosts
+    if (host.contains('cdninstagram.com') ||
+        host.contains('fbcdn.net') ||
+        host.contains('tiktokcdn.com') ||
+        host.contains('tikwm.com') ||
+        host.contains('googlevideo.com') ||
+        host.contains('twimg.com') ||
+        host.contains('v.redd.it') ||
+        host.contains('scontent.') ||
+        host.contains('video.twimg.com')) {
+      return true;
+    }
+
+    // Direct video/audio/app extensions
+    if (path.endsWith('.mp4') ||
+        path.endsWith('.mkv') ||
+        path.endsWith('.webm') ||
+        path.endsWith('.mov') ||
+        path.endsWith('.mp3') ||
+        path.endsWith('.m4a') ||
+        path.endsWith('.apk') ||
+        path.endsWith('.xapk') ||
+        lower.contains('.mp4?') ||
+        lower.contains('.webm?') ||
+        lower.contains('.mkv?') ||
+        lower.contains('mime_type=video')) {
+      return true;
+    }
+
+    return false;
+  }
+
   // Platform detection helpers
   static bool isSocialVideoPlatform(String rawUrl) {
+    // If it is already a direct CDN media stream, do NOT treat it as a social webpage!
+    if (isDirectMediaCdnStream(rawUrl)) {
+      return false;
+    }
+
     final lower = rawUrl.toLowerCase();
     return lower.contains('youtube.com') ||
         lower.contains('youtu.be') ||
@@ -535,11 +580,13 @@ class CloudExtractorService {
   }
 
   static bool isTikTokUrl(String rawUrl) {
+    if (isDirectMediaCdnStream(rawUrl)) return false;
     final lower = rawUrl.toLowerCase();
     return lower.contains('tiktok.com') || lower.contains('douyin.com');
   }
 
   static bool isYouTubeUrl(String rawUrl) {
+    if (isDirectMediaCdnStream(rawUrl)) return false;
     final lower = rawUrl.toLowerCase();
     return lower.contains('youtube.com') || lower.contains('youtu.be');
   }
