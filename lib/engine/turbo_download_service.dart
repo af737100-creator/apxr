@@ -834,6 +834,27 @@ class TurboDownloadService {
     final isMediaVideo = task.isVideo;
 
     if ((contentType.contains('text/html') || contentType.contains('text/plain')) && isMediaVideo) {
+      try {
+        final List<int> firstBytes = [];
+        await for (final chunk in stream) {
+          firstBytes.addAll(chunk);
+          if (firstBytes.length > 64 * 1024) break;
+        }
+        final htmlContent = utf8.decode(firstBytes, allowMalformed: true);
+        
+        final videoMatch = RegExp(r'(?:src|href|url)=["\x27](https?:\/\/[^"\x27]+\.mp4[^"\x27]*)["\x27]', caseSensitive: false).firstMatch(htmlContent) ??
+            RegExp(r'"(https?:\/\/[^"]+\.mp4[^"]*)"').firstMatch(htmlContent) ??
+            RegExp(r'property="og:video"[^>]*content=["\x27](https?:\/\/[^"\x27]+)["\x27]', caseSensitive: false).firstMatch(htmlContent) ??
+            RegExp(r'https?:\/\/[^\s<>"]+\.(?:mp4|mkv|webm|mov|m4a)(?:\?[^\s<>"]*)?', caseSensitive: false).firstMatch(htmlContent);
+
+        if (videoMatch != null && videoMatch.group(1) != null) {
+          final redirectedUrl = videoMatch.group(1)!.replaceAll('&amp;', '&');
+          debugPrint('[TurboDownloadService] 🔄 Extracted inner video stream from HTML wrapper: $redirectedUrl');
+          task.sourceUrl = redirectedUrl;
+          return downloadSingleStream(task, singleSegment, targetFile, headers);
+        }
+      } catch (_) {}
+
       throw Exception('الرابط المعطى هو صفحة ويب وليس تيار فيديو مباشر. افتح الرابط في المتصفح المدمج');
     }
 
