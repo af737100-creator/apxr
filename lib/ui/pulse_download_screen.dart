@@ -162,20 +162,15 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
       _initStoragePath();
     } catch (_) {}
 
-    // Speed sampling timer (records speed every 500ms for the waveform graph)
-    _speedSampleTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (!mounted) return;
-      setState(() {
-        if (_speedHistory.isNotEmpty) {
-          _speedHistory.removeAt(0);
-        }
-        _speedHistory.add(_isDownloading ? _currentSpeedBps : 0.0);
-      });
-    });
+    // Speed sampling timer (records speed every 1000ms for the waveform graph when downloading)
+    _startSpeedSampleTimer();
 
     // Listen to real-time engine telemetry
     _progressSub = _turboService.onProgress.listen((event) {
       if (!mounted) return;
+      if (event.progressPercent == _progress && event.speedBytesPerSec == _currentSpeedBps) {
+        return;
+      }
       setState(() {
         _progress = event.progressPercent;
         _currentSpeedBps = event.speedBytesPerSec;
@@ -197,6 +192,24 @@ class _PulseDownloadScreenState extends State<PulseDownloadScreen>
         }
       });
     });
+  }
+
+  void _startSpeedSampleTimer() {
+    _speedSampleTimer?.cancel();
+    _speedSampleTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+      if (!mounted || !_isDownloading) return;
+      setState(() {
+        if (_speedHistory.isNotEmpty) {
+          _speedHistory.removeAt(0);
+        }
+        _speedHistory.add(_currentSpeedBps);
+      });
+    });
+  }
+
+  void _stopSpeedSampleTimer() {
+    _speedSampleTimer?.cancel();
+    _speedSampleTimer = null;
   }
 
   void _onManagerUpdate() {
