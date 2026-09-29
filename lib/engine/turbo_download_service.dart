@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -851,7 +852,7 @@ class TurboDownloadService {
           final redirectedUrl = videoMatch.group(1)!.replaceAll('&amp;', '&');
           debugPrint('[TurboDownloadService] 🔄 Extracted inner video stream from HTML wrapper: $redirectedUrl');
           task.sourceUrl = redirectedUrl;
-          return downloadSingleStream(task, singleSegment, targetFile, headers);
+          return downloadSingleStream(task: task);
         }
       } catch (_) {}
 
